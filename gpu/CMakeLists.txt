@@ -164,7 +164,7 @@ add_custom_command(OUTPUT ${BB_TEXT_DIR}/bbport_text_data.inc
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shim/locales/gen_text.py ${BB_TEXT_LOCALES} VERBATIM)
 target_sources(bbgpu PRIVATE ${BB_TEXT_DIR}/bbport_text_data.inc)
 target_include_directories(bbgpu PRIVATE ${BB_TEXT_DIR})
-target_include_directories(bbgpu PRIVATE shim layer games cp shadps4 ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include ../src ../recomp/src)
+target_include_directories(bbgpu PRIVATE . fsr4_metal/include shim layer games cp shadps4 ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include ../src ../recomp/src)
 target_compile_definitions(bbgpu PRIVATE BOOST_ASIO_STANDALONE NDEBUG)
 target_compile_options(bbgpu PRIVATE -Wno-deprecated-declarations -Wno-missing-field-initializers)
 # Native arm64 (docs/ARM64_NATIVE.md): x86 cycle-count and spin-wait intrinsics for the GPU library.
@@ -173,6 +173,10 @@ if (CMAKE_OSX_ARCHITECTURES STREQUAL "arm64" OR CMAKE_SYSTEM_PROCESSOR MATCHES "
 endif()
 # Runtime symbols (runtime_memory_*, runtime_process_*) resolve against bb-probe.
 if (APPLE)
+    target_sources(bbgpu PRIVATE shadps4/video_core/renderer_vulkan/vk_fsr4_metal.mm)
+    set_source_files_properties(shadps4/video_core/renderer_vulkan/vk_fsr4_metal.mm PROPERTIES
+        COMPILE_FLAGS "-fobjc-arc")
+    target_link_libraries(bbgpu PRIVATE "-framework Metal" "-framework Foundation")
     target_link_options(bbgpu PRIVATE -Wl,-undefined,dynamic_lookup)
     # Zydis's package names Zycore by -lZycore only: the deps prefix's lib directory.
     target_link_directories(bbgpu PRIVATE ${CMAKE_PREFIX_PATH}/lib)

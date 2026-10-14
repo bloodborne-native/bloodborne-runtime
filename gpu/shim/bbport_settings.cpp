@@ -166,7 +166,11 @@ void Load() {
 void ConfigureUpscalerSupport(bool fsr4, bool fsr411) {
     auto& v = Get();
     v.fsr4_supported = fsr4;
+#ifdef __APPLE__
+    v.fsr411_supported = fsr411;
+#else
     v.fsr411_supported = fsr4 && fsr411;
+#endif
     const int requested = v.upscaler;
     if ((requested == UpscalerFsr4 && !v.fsr4_supported) ||
         (requested == UpscalerFsr411 && !v.fsr411_supported)) {

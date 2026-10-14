@@ -17,6 +17,9 @@
 #include "video_core/renderer_vulkan/fsr411/fsr411.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
+#ifdef __APPLE__
+#include "video_core/renderer_vulkan/vk_fsr4_metal.h"
+#endif
 
 namespace Vulkan {
 
@@ -72,6 +75,9 @@ struct Fsr4Upscaler::Impl {
     std::unique_ptr<Fsr411::Upscaler> fsr411;
     std::deque<u64> fsr411_ticks; ///< scheduler ticks of its recent frames (constant ring)
     std::string fsr411_described;
+#ifdef __APPLE__
+    std::unique_ptr<Fsr4MetalBackend> metal_backend;
+#endif
 
     Impl(const Instance& instance_, Scheduler& scheduler_)
         : instance{instance_}, scheduler{scheduler_} {}
@@ -235,9 +241,24 @@ struct Fsr4Upscaler::Impl {
 
     bool Record411(const Frame& f) {
         if (!instance.IsFsr411Supported()) {
-            Fail("FSR 4.1.1 needs INT8 dot products and VK_VALVE_shader_mixed_float_dot_product", true);
+            Fail("FSR 4.1.1 is not supported on this GPU", true);
             return false;
         }
+#ifdef __APPLE__
+        if (instance.IsMetalObjectsSupported()) {
+            if (!metal_backend) {
+                metal_backend = Fsr4MetalBackend::Create(instance, scheduler);
+            }
+            if (metal_backend) {
+                if (metal_backend->Record(f)) {
+                    problem.clear();
+                    return true;
+                }
+                Fail(metal_backend->Problem() ? metal_backend->Problem() : "FSR 4.1.1 Metal encode failed", false);
+                return false;
+            }
+        }
+#endif
         if (!fsr411) {
             const char* env = std::getenv("BB_FSR411_DIR");
             const Fsr411::Features features{.fp8_matrices = instance.IsFsr411Fp8Supported(),
@@ -281,6 +302,9 @@ struct Fsr4Upscaler::Impl {
     }
 
     bool Record(const Frame& f) {
+#ifdef __APPLE__
+        return Record411(f);
+#endif
         if (BbSettings::Get().upscaler == BbSettings::UpscalerFsr411) {
             return Record411(f);
         }
