@@ -30,37 +30,48 @@ int main() {
     assert(RenderPreset() == Performance);
     for (bool fsr4 : {false, true}) {
         for (bool fsr411 : {false, true}) {
-            for (int requested = 0; requested < UpscalerCount; ++requested) {
-                FILE* config = std::fopen(path, "w");
-                assert(config);
-                std::fprintf(config, "upscaler=%s\npreset=3\noutput_res=2560x1440\n",
-                             UpscalerName(requested));
-                std::fclose(config);
-                s.fsr4_problem = nullptr;
-                Load();
-                assert(s.upscaler == requested);
-                ConfigureUpscalerSupport(fsr4, fsr411);
-                const bool unsupported = (requested == UpscalerFsr4 && !fsr4) ||
+            for (bool fsr411_lossy : {false, true}) {
+                for (bool fsr412 : {false, true}) {
+                    for (int requested = 0; requested < UpscalerCount; ++requested) {
+                        FILE* config = std::fopen(path, "w");
+                        assert(config);
+                        std::fprintf(config, "upscaler=%s\npreset=3\noutput_res=2560x1440\n",
+                                     UpscalerName(requested));
+                        std::fclose(config);
+                        s.fsr4_problem = nullptr;
+                        Load();
+                        assert(s.upscaler == requested);
+                        ConfigureUpscalerSupport(fsr4, fsr411, fsr411_lossy, fsr412);
+                        const bool unsupported =
+                            (requested == UpscalerFsr4 && !fsr4) ||
 #ifdef __APPLE__
-                    (requested == UpscalerFsr411 && !fsr411);
+                            (requested == UpscalerFsr411 && !fsr411) ||
+                            (requested == UpscalerFsr411Lossy && !fsr411_lossy) ||
+                            (requested == UpscalerFsr412 && !fsr412);
 #else
-                    (requested == UpscalerFsr411 && !(fsr4 && fsr411));
+                            (requested == UpscalerFsr411 && !(fsr4 && fsr411)) ||
+                            requested == UpscalerFsr411Lossy || requested == UpscalerFsr412;
 #endif
-                const int selected = requested == UpscalerMetalFx ? UpscalerOff :
-                                     unsupported ? UpscalerFsr3 : requested;
-                assert(s.upscaler == selected);
-                assert(s.fsr4_supported == fsr4);
+                        const int selected = requested == UpscalerMetalFx ? UpscalerOff :
+                                             unsupported ? UpscalerFsr3 : requested;
+                        assert(s.upscaler == selected);
+                        assert(s.fsr4_supported == fsr4);
 #ifdef __APPLE__
-                assert(s.fsr411_supported == fsr411);
+                        assert(s.fsr411_supported == fsr411);
+                        assert(s.fsr411_lossy_supported == fsr411_lossy);
+                        assert(s.fsr412_supported == fsr412);
 #else
-                assert(s.fsr411_supported == (fsr4 && fsr411));
+                        assert(s.fsr411_supported == (fsr4 && fsr411));
+                        assert(!s.fsr411_lossy_supported && !s.fsr412_supported);
 #endif
-                assert(bool(s.fsr4_problem.load()) == unsupported);
-                assert(s.preset == Performance && s.output_res == PackSize({2560, 1440}));
-                // Startup patch settings still describe the already applied guest patches.
-                assert(s.startup_upscaler == requested);
-                ConfigureUpscalerSupport(fsr4, fsr411);
-                assert(s.upscaler == selected);
+                        assert(bool(s.fsr4_problem.load()) == unsupported);
+                        assert(s.preset == Performance && s.output_res == PackSize({2560, 1440}));
+                        // Startup patch settings still describe the already applied guest patches.
+                        assert(s.startup_upscaler == requested);
+                        ConfigureUpscalerSupport(fsr4, fsr411, fsr411_lossy, fsr412);
+                        assert(s.upscaler == selected);
+                    }
+                }
             }
         }
     }

@@ -100,9 +100,13 @@ export __GL_SHADER_DISK_CACHE_SKIP_CLEANUP=${__GL_SHADER_DISK_CACHE_SKIP_CLEANUP
 export __GL_SHADER_DISK_CACHE_SIZE=${__GL_SHADER_DISK_CACHE_SIZE:-10737418240}
 export MESA_SHADER_CACHE_MAX_SIZE=${MESA_SHADER_CACHE_MAX_SIZE:-4G}
 mkdir -p "$BB_GPU_USER_DIR"
-# FSR 4.1.1 assets (tools/fsr4cap/build_assets.sh): next to run.sh or in the data directory.
+# FSR 4.1.x assets (tools/fsr4cap/build_assets.sh): next to run.sh or in the data directory.
+# 4.1 / 4.1 Lossy use AMD's 131,072-byte 4.1.1 pair; 4.1.2 Lite its own 27,392-byte pair.
 if [[ -z ${BB_FSR411_DIR:-} && ! -d fsr4_411 && -d $data/fsr4_411 ]]; then
     export BB_FSR411_DIR=$data/fsr4_411
+fi
+if [[ -z ${BB_FSR412_DIR:-} && ! -d fsr4_412 && -d $data/fsr4_412 ]]; then
+    export BB_FSR412_DIR=$data/fsr4_412
 fi
 if [[ -z ${BB_PREBUILT:-} && -z ${BB_IN_NIX_SHELL:-} ]] && ! { command -v pkg-config >/dev/null && pkg-config --exists vulkan sdl3; } && command -v nix-shell >/dev/null; then
     args=''; if (( $# )); then args=$(printf '%q ' "$@"); fi

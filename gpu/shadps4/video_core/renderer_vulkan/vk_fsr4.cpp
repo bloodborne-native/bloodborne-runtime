@@ -73,12 +73,13 @@ struct Fsr4Upscaler::Impl {
     bool fatal = false;
     u64 next_frame_id = 1;
     std::deque<std::pair<u64, u64>> in_flight; ///< provider frame id, scheduler tick
-    // bbport: FSR 4.1.1 (upscaler=fsr411): the replay of AMD's 4.1.1 DLL (fsr411/).
+    // bbport: FSR 4.1.x (upscaler=fsr411 / fsr411-lossy / fsr412): the 4.1 replay on Vulkan
+    // (fsr411/) or the Metal backend on macOS (fsr4_metal/, three modes).
     std::unique_ptr<Fsr411::Upscaler> fsr411;
     std::deque<u64> fsr411_ticks; ///< scheduler ticks of its recent frames (constant ring)
     std::string fsr411_described;
 #ifdef __APPLE__
-    std::unique_ptr<Fsr4MetalBackend> metal_backend;
+    std::unique_ptr<Fsr4MetalBackend> metal_backends[3];
 #endif
 
     Impl(const Instance& instance_, Scheduler& scheduler_)
@@ -242,23 +243,48 @@ struct Fsr4Upscaler::Impl {
     }
 
     bool Record411(const Frame& f) {
-        if (!instance.IsFsr411Supported()) {
-            Fail("FSR 4.1.1 is not supported on this GPU", true);
+        const int selected = BbSettings::Get().upscaler;
+#ifdef __APPLE__
+        const Fsr4MetalMode mode = selected == BbSettings::UpscalerFsr412
+                                       ? Fsr4MetalMode::Fsr412
+                                   : selected == BbSettings::UpscalerFsr411Lossy
+                                       ? Fsr4MetalMode::Fsr411Lossy
+                                       : Fsr4MetalMode::Fsr411;
+        const char* name = mode == Fsr4MetalMode::Fsr412        ? "FSR 4.1.2"
+                           : mode == Fsr4MetalMode::Fsr411Lossy ? "FSR 4.1 Lossy"
+                                                                : "FSR 4.1";
+        const bool supported = mode == Fsr4MetalMode::Fsr412        ? instance.IsFsr412Supported()
+                               : mode == Fsr4MetalMode::Fsr411Lossy ? instance.IsFsr411LossySupported()
+                                                                    : instance.IsFsr411Supported();
+        if (!supported) {
+            Fail(std::string(name) + " is not supported on this GPU", true);
             return false;
         }
-#ifdef __APPLE__
         if (instance.IsMetalObjectsSupported()) {
-            if (!metal_backend) {
-                metal_backend = Fsr4MetalBackend::Create(instance, scheduler);
+            auto& backend = metal_backends[int(mode)];
+            if (!backend) {
+                backend = Fsr4MetalBackend::Create(instance, scheduler, mode);
             }
-            if (metal_backend) {
-                if (metal_backend->Record(f)) {
+            if (backend) {
+                if (backend->Record(f)) {
                     problem.clear();
                     return true;
                 }
-                Fail(metal_backend->Problem() ? metal_backend->Problem() : "FSR 4.1.1 Metal encode failed", false);
+                const std::string message = backend->Problem()
+                                                ? backend->Problem()
+                                                : std::string(name) + " Metal encode failed";
+                Fail(message, false);
                 return false;
             }
+        }
+#else
+        if (selected != BbSettings::UpscalerFsr411) {
+            Fail("FSR 4.1 Lossy and FSR 4.1.2 are macOS Metal only", true);
+            return false;
+        }
+        if (!instance.IsFsr411Supported()) {
+            Fail("FSR 4.1 is not supported on this GPU", true);
+            return false;
         }
 #endif
         if (!fsr411) {
@@ -304,14 +330,18 @@ struct Fsr4Upscaler::Impl {
     }
 
     bool Record(const Frame& f) {
+        const int selected = BbSettings::Get().upscaler;
+        const bool fsr41x = selected == BbSettings::UpscalerFsr411 ||
+                            selected == BbSettings::UpscalerFsr411Lossy ||
+                            selected == BbSettings::UpscalerFsr412;
 #ifdef __APPLE__
-        if (BbSettings::Get().upscaler == BbSettings::UpscalerFsr411) {
+        if (fsr41x) {
             return Record411(f);
         }
-        Fail("FSR 4.0 is not supported on macOS (use FSR 4.1.1)", true);
+        Fail("FSR 4.0 is not supported on macOS (use FSR 4.1.x)", true);
         return false;
 #endif
-        if (BbSettings::Get().upscaler == BbSettings::UpscalerFsr411) {
+        if (fsr41x) {
             return Record411(f);
         }
         if (fatal) {

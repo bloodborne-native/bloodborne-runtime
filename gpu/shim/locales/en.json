@@ -2,7 +2,7 @@
   "upscaler.off": "Off",
   "upscaler.taa": "TAA (native anti-aliasing)",
   "fsr4.unavailable": "FSR 4 unavailable: %s",
-  "fsr4.hint411": "FSR 4.1.1 in INT8 mode: the model from AMD's 4.1.1 DLL, replayed on Vulkan (output identical to the DLL). One model for Native..Performance and a separate one for Ultra Performance. Assets: tools/fsr4cap/build_assets.sh (needs the DLLs and Proton).",
+  "fsr4.hint411": "FSR 4.1 in Metal: AMD's 4.1 network with fast math, full quality. Uses the player's 4.1.1 initializers (tools/fsr4_metal_initializers.sh).",
   "fsr4.hint": "FSR 4 in INT8 mode (model v07 from the AMD FidelityFX SDK sources). Higher quality than FSR 3.1, but a heavier pass. Changing the preset rebuilds the model (a short pause). Assets: tools/fetch_fsr4_assets.sh.",
   "fsr4.autoExposure": "FSR 4: auto exposure",
   "fsr4.invertJitter": "FSR 4: inverted jitter sign",
@@ -179,5 +179,7 @@
   "trophies.silver": "Silver",
   "trophies.bronze": "Bronze",
   "trophies.base": "Bloodborne",
-  "trophies.old_hunters": "The Old Hunters"
+  "trophies.old_hunters": "The Old Hunters",
+  "fsr4.hint411lossy": "FSR 4.1 Lossy in Metal: the 4.1 network with the six trained layers from the community weights (fetched at build time, GPL). Faster than 4.1 with some detail loss. Uses the player's 4.1.1 initializers.",
+  "fsr4.hint412": "FSR 4.1.2 Lite in Metal: AMD's 4.1.2 INT8 Lite model, imported from the builder's own AMD DLL. Uses the player's 4.1.2 initializers (tools/fsr4_metal_initializers.sh amdvkffx64.dll)."
 }

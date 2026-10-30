@@ -261,7 +261,9 @@ TemporalUpscaler::TemporalUpscaler(const Instance& instance_, Scheduler& schedul
     metalfx = std::make_unique<MetalFxUpscaler>(instance, scheduler);
     // The Metal renderer offers MetalFX only (docs/RENDER_ADAPTER.md, decision 5).
     BbSettings::ConfigureUpscalerSupport(instance.IsFsr4Int8Supported(),
-                                         instance.IsFsr411Supported(), metalfx->Supported(),
+                                         instance.IsFsr411Supported(),
+                                         instance.IsFsr411LossySupported(),
+                                         instance.IsFsr412Supported(), metalfx->Supported(),
                                          MetalFrameOn());
 #ifdef __APPLE__
     PublishMetalFxProblem(metalfx->Problem());
@@ -2309,9 +2311,11 @@ namespace Vulkan {
 
 bool TemporalUpscaler::UseFsr4() const {
     const int selected = BbSettings::Get().upscaler;
-    const bool supported = selected == BbSettings::UpscalerFsr411
-                               ? instance.IsFsr411Supported()
-                               : instance.IsFsr4Int8Supported();
+    const bool supported =
+        selected == BbSettings::UpscalerFsr411        ? instance.IsFsr411Supported()
+        : selected == BbSettings::UpscalerFsr411Lossy ? instance.IsFsr411LossySupported()
+        : selected == BbSettings::UpscalerFsr412       ? instance.IsFsr412Supported()
+                                                       : instance.IsFsr4Int8Supported();
     return BbSettings::IsFsr4(selected) && supported && !fsr4_failed;
 }
 

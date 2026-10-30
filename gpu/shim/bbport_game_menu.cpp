@@ -229,8 +229,9 @@ void DefineTexts() {
     // The page's only pop-up list, last: it opens below itself.
     row(Upscaler, "Upscaler", "Апскейлер", "Temporal upscaler and anti-aliasing",
         "Временной апскейлер и сглаживание",
-        {off, AddText("FSR 3.1", "FSR 3.1"), AddText("FSR 4", "FSR 4"), AddText("FSR 4.1.1", "FSR 4.1.1"),
-         AddText("TAA", "TAA"), AddText("DLSS", "DLSS")});
+        {off, AddText("FSR 3.1", "FSR 3.1"), AddText("FSR 4", "FSR 4"), AddText("FSR 4.1", "FSR 4.1"),
+         AddText("TAA", "TAA"), AddText("DLSS", "DLSS"), AddText("MetalFX", "MetalFX"),
+         AddText("FSR 4.1 Lossy", "FSR 4.1 Lossy"), AddText("FSR 4.1.2 Lite", "FSR 4.1.2 Lite")});
 
     page("Effects", "Эффекты", "The game's effects (bbport; after a restart)",
          "Эффекты игры (bbport; после перезапуска)");
@@ -333,10 +334,13 @@ void MakeTexts(u8* pair, u32 name, u32 help) {
 /// Upscalers this GPU and build can run (known once the device exists, before any menu).
 bool UpscalerAvailable(int i) {
     const auto& s = BbSettings::Get();
-    return i == BbSettings::UpscalerFsr4     ? s.fsr4_supported.load()
-           : i == BbSettings::UpscalerFsr411 ? s.fsr411_supported.load()
-           : i == BbSettings::UpscalerDlss   ? s.dlss_supported.load()
-                                             : true;
+    return i == BbSettings::UpscalerFsr4          ? s.fsr4_supported.load()
+           : i == BbSettings::UpscalerFsr411      ? s.fsr411_supported.load()
+           : i == BbSettings::UpscalerFsr411Lossy ? s.fsr411_lossy_supported.load()
+           : i == BbSettings::UpscalerFsr412      ? s.fsr412_supported.load()
+           : i == BbSettings::UpscalerDlss        ? s.dlss_supported.load()
+           : i == BbSettings::UpscalerMetalFx     ? s.metalfx_supported.load()
+                                                  : true;
 }
 
 void AddRows(void* page, const std::vector<Row>& rows) {
