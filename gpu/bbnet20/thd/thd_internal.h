@@ -11,6 +11,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "bbport_guest_call.h"
 #include "common/types.h"
 
 extern "C" int32_t runtime_thread_spawn(void** out, void* PS4_SYSV_ABI (*entry)(void*),
@@ -63,11 +64,11 @@ enum class Prio { Context = 0, Request = 1, Signaling = 2, RoomEvent = 3 };
 void DispatchAfter(int delay_ms, Prio prio, std::function<void()> fn);
 std::int64_t NowMs();
 
-// A guest callback (the SysV ABI, integer arguments).
+// A guest callback (the SysV ABI, integer arguments). The game's code is x86-64: it runs through
+// bbcpu (runtime_guest_call), never as a native call.
 template <typename... A>
 inline std::int64_t CallGuest(void* fn, A... a) {
-    using F = std::int64_t(PS4_SYSV_ABI*)(A...);
-    return fn ? reinterpret_cast<F>(fn)(a...) : 0;
+    return fn ? BbGuest::Call<std::int64_t>(fn, a...) : 0;
 }
 
 // ---- our endpoint
