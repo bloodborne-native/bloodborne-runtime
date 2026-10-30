@@ -1423,10 +1423,15 @@ void TextureCache::GarbageCollectImages() {
         // SafeToDownload() rejects it, but freeing it would discard those contents. This is
         // visible as lost exposure/material lighting after the 1440p scene crosses the GC mark.
         // Over the critical mark memory comes first: kept without a limit, these images could
-        // grow VRAM the way the render targets above did.
+        // grow VRAM the way the render targets above did. The usage is compared, not the
+        // aggressive flag: the first pass runs without it, and an image it kept (touched) is then
+        // too recent for the aggressive passes. GpuDirty ones are not kept: a later GPU write put
+        // their valid data in the buffer cache. Both from maze1377's port of this fix to
+        // SpartanPort (FelipePrado0/SpartanPort PR #1124, 8f463a1).
         const bool gpu_contents_unresolved =
             True(image.flags & ImageFlagBits::GpuModified) && !download &&
-            False(image.flags & ImageFlagBits::CpuDirty) && !aggresive;
+            False(image.flags & ImageFlagBits::GpuDirty) &&
+            False(image.flags & ImageFlagBits::CpuDirty) && total_used_memory < critical_gc_memory;
         if ((tiled && download) || (download && !pressured) || gpu_contents_unresolved) {
             lru_cache.Touch(image.lru_id, gc_tick);
             BbStats::gc_kept_images.fetch_add(1, std::memory_order_relaxed);
