@@ -51,5 +51,9 @@ void bb_boot_free(BbBoot *boot);
 typedef struct { uint32_t sku, user_params[4]; } BbContentProfile;
 int bb_content_profile(const char *game_dir, int full, BbContentProfile *out, char *error, size_t error_size);
 int bb_content_write(const BbContentProfile *profile, const char *path);
+/* GAME_DIR/eboot.bin's loadable (PT_LOAD) segments as [vaddr, vaddr + memsz), at most MAX:
+ * what patches may write to (runtime_patches.c). 0 on success. */
+int bb_eboot_segments(const char *game_dir, uint64_t (*segments)[2], size_t max, size_t *count,
+                      char *error, size_t error_size);
 /* The SHA-256 of `size` bytes as 64 hexadecimal digits. */
 void bb_sha256_hex(const void *data, size_t size, char out[65]);

@@ -26,8 +26,9 @@ runs through bbcpu from the `recomp/` submodule (bloodborne-recomp), or as its r
 - `gpu/`: `shadps4/` (video core, shader recompiler; `video_core/renderer_metal/` the Metal
   backend), `shim/` (window, in-game menu, settings, game hooks, Metal residency), `layer/`,
   `cp/`, `games/` (game profile). Built by CMake into `libbbgpu`.
-- `src/runtime_prepare.c`: the executable prepared and linked in memory at start (`bb-probe -`).
-- `scripts/`: `patches.py`, `game_check.py`, `mods.py` (at start); `prepare.py`, `link_modules.py` (the same bytes as files, for checks);
+- `src/runtime_prepare.c`: the executable prepared and linked in memory at start (`bb-probe -`);
+  `src/runtime_patches.c`: the game's patches built at start (`--patches -`).
+- `scripts/`: `game_check.py`, `mods.py` (at start); `prepare.py`, `link_modules.py`, `patches.py` (the same bytes as files, for checks);
   `scripts/macos/build-deps.sh`.
 - `run.sh` (the app calls it), `build.sh`, `patches/Bloodborne.xml`, `tools/` (test runners,
   `grab.sh`, Metal trace readers).

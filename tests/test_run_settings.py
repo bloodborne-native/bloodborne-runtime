@@ -10,7 +10,10 @@ import sys
 import tempfile
 import unittest
 
+PROGRAM = ROOT / 'out' / 'bb-probe'
 
+
+@unittest.skipUnless(PROGRAM.is_file(), 'needs the built program (out/bb-probe: bash build.sh)')
 class RestartResolutionTests(unittest.TestCase):
     def run_restarts(self, explicit=False, live=False, ini_extra='', caps=None, bare_path=False):
         with tempfile.TemporaryDirectory() as directory:
@@ -52,8 +55,10 @@ class RestartResolutionTests(unittest.TestCase):
                 '    os.environ["BB_TEST_STAGE"]=str(stage+1)\n'
                 '    os.execlp("bash", "bash", "run.sh")\n')
             probe.chmod(0o755)
+            # The scaled sizes come from the real program (bb-probe --print-scaled).
             env = dict(os.environ, BB_PREBUILT='1', BB_PROBE=str(probe), PYTHON=str(python),
-                       BB_DATA_DIR=str(data), BB_CONFIG=str(config), BB_GAME_DIR=str(data))
+                       BB_PROBE_PROGRAM=str(PROGRAM), BB_DATA_DIR=str(data), BB_CONFIG=str(config),
+                       BB_GAME_DIR=str(data))
             for key in ('BB_RENDER_RES', 'BB_OUTPUT_RES', 'BB_AUTO_RENDER_RES', 'BB_TEST_STAGE'):
                 env.pop(key, None)
             env.pop('BB_LIVE_RES', None)

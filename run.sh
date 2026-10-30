@@ -78,11 +78,14 @@ mkdir -p "$out"
 # run.sh runs the game, build.sh builds it (the test runners call it first): a checkout that has not
 # been built says so instead of building behind the player's back, and the packaged app carries its
 # own program (BB_PREBUILT).
+# BB_PROBE_PROGRAM: the program itself, for run.sh's own questions (--print-scaled); BB_PROBE may
+# be a wrapper (gdb) around it.
 if [[ -n ${BB_PREBUILT:-} ]]; then
-    probe=${BB_PROBE:-bin/bb-probe}
+    probe_program=${BB_PROBE_PROGRAM:-bin/bb-probe}
 else
-    probe=${BB_PROBE:-out/bb-probe}  # BB_PROBE: a wrapper (gdb) around it
+    probe_program=${BB_PROBE_PROGRAM:-out/bb-probe}
 fi
+probe=${BB_PROBE:-$probe_program}
 [[ -x $probe ]] || { echo "No $probe: run bash build.sh first." >&2; exit 1; }
 # The GPU library's caches (shaders, pipelines) under the saves' folder: without it a fresh
 # release folder fell back to shadPS4's own directory (macOS: ~/Library/Application Support/shadPS4).
@@ -166,7 +169,7 @@ if [[ -n ${BB_PROBE:-} ]]; then caps=$(dirname -- "$BB_PROBE")/bb-gpu-capabiliti
 elif [[ -n ${BB_PREBUILT:-} ]]; then caps=bin/bb-gpu-capabilities
 else caps=out/bb-gpu-capabilities; fi
 if [[ -z ${BB_RENDER_RES:-} ]]; then
-    read -r scaled_render scaled_output < <("$PYTHON" scripts/patches.py --print-scaled --settings "$BB_CONFIG") || true
+    read -r scaled_render scaled_output < <("$probe_program" --print-scaled "$BB_CONFIG") || true
 fi
 live=0
 if [[ -n ${scaled_output:-} ]]; then
@@ -198,8 +201,9 @@ elif [[ -n ${scaled_output:-} ]]; then
     fi
     echo "Output ${scaled_output}: scene ${scaled_render}, direct memory ${BB_DMEM_MB:-default} MiB (live_resolution=1: live changes)"
 fi
-"$PYTHON" scripts/patches.py --out "$out" --fps "$fps" --extra "${BB_PATCHES:-}" --settings "$BB_CONFIG" --game-dir "$game" --render-res "${BB_RENDER_RES:-}" --output-res "${BB_OUTPUT_RES:-}" \
-    --patches-dir "${BB_PATCHES_DIR:-$data/patches}" --patches-config "${BB_PATCHES_CONFIG:-$data/patches.json}"
+# The game's patches (patches/Bloodborne.xml, bbport.ini's choices, the player's patches/ and
+# patches.json) are built by the game at start (`--patches -`, src/runtime_patches.c) from these.
+export BB_FPS=$fps BB_PATCHES_DIR=${BB_PATCHES_DIR:-$data/patches} BB_PATCHES_CONFIG=${BB_PATCHES_CONFIG:-$data/patches.json}
 # Background upload of the game's GPU memory into VRAM ahead of use (BufferCache::Preupload):
 # 1 = only memory already in VRAM that the game rewrote (no new VRAM), 2 = all of it (~3 GB more
 # VRAM), 0 = off. BB_GUEST_GPU_MEMORY=1 puts guest direct memory in GPU-visible dma-buf chunks
@@ -312,7 +316,7 @@ if [[ ${BB_ONLINE:-0} == 1 && -f scripts/online.py ]]; then
         export SHADPS4_HTTP_HOST_OVERRIDES_JSON
     fi
 fi
-probe_args=(- --patches "$out/patches.bin" --app0 "$game" --user "${BB_USER_DIR:-$data/user}" --timeout "${BB_TIMEOUT:-0}" "$@")
+probe_args=(- --patches - --app0 "$game" --user "${BB_USER_DIR:-$data/user}" --timeout "${BB_TIMEOUT:-0}" "$@")
 if [[ -n ${mod_game:-} ]]; then
     # stdin passed on explicitly: a background command's is /dev/null otherwise (the launcher's
     # settings channel arrives on it).

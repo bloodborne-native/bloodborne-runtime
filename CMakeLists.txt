@@ -281,6 +281,12 @@ if (BUILD_TESTING)
     # The runtime's own preparation of the executable (src/runtime_prepare.c), checked against
     # scripts/prepare.py's boot.bin byte for byte.
     add_executable(bb-prepare EXCLUDE_FROM_ALL tools/bb_prepare.c src/runtime_prepare.c)
+    # The runtime's own patches.bin (src/runtime_patches.c), checked against scripts/patches.py's
+    # byte for byte; run.sh's patch step without Python.
+    add_executable(bb-patches tools/bb_patches.c src/runtime_patches.c src/runtime_prepare.c)
+    if(NOT APPLE)
+        target_link_libraries(bb-patches PRIVATE m)
+    endif()
     add_executable(content-test EXCLUDE_FROM_ALL tests/test_content.c src/runtime_content.c
                    src/platform.c)
     target_link_libraries(content-test PRIVATE bb-c)

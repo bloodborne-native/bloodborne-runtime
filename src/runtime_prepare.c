@@ -321,6 +321,27 @@ static int push_reloc(BbBoot *boot, size_t *capacity, BbBootReloc reloc) {
     return 0;
 }
 
+int bb_eboot_segments(const char *game_dir, uint64_t (*segments)[2], size_t max, size_t *count,
+                      char *error, size_t error_size) {
+    char path[4096];
+    snprintf(path, sizeof(path), "%s/eboot.bin", game_dir);
+    Bytes data;
+    if (read_file(path, &data)) return fail(error, error_size, "cannot read %s", path);
+    Elf elf;
+    const int rc = parse_self(data, &elf, error, error_size);
+    free((void *)data.data);
+    if (rc) return -1;
+    *count = 0;
+    for (int i = 0; i < elf.count && *count < max; ++i)
+        if (elf.ph[i].type == PT_LOAD) {
+            segments[*count][0] = elf.ph[i].vaddr;
+            segments[*count][1] = elf.ph[i].vaddr + elf.ph[i].memsz;
+            ++*count;
+        }
+    free(elf.elf);
+    return 0;
+}
+
 int bb_boot_prepare(const char *game_dir, BbBoot *boot, char *error, size_t error_size) {
     memset(boot, 0, sizeof(*boot));
     char path[4096];

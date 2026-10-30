@@ -35,7 +35,9 @@ The Python scripts that did it before (`scripts/prepare.py`, `scripts/link_modul
 `scripts/content_profile.py`) write the same bytes, and `bb-prepare` (`tools/bb_prepare.c`)
 compares them. `src/probe.c` maps that image at `BB_IMAGE_BASE` (on macOS inside the guest address range that
 `src/platform.c` reserves at startup), applies relocations and imports, then the patches
-(`scripts/patches.py` from `patches/Bloodborne.xml`, the community's patch collection), then the
+(built at start by `src/runtime_patches.c` from `patches/Bloodborne.xml`, the community's patch
+collection, bbport.ini's choices and the player's patch folder: `--patches -`; `scripts/patches.py`
+writes the same bytes, and `bb-patches` (`tools/bb_patches.c`) compares them), then the
 runtime's own hooks (`bbgpu_patch_image`), and finally starts the game's entry point.
 
 `scripts/game_check.py` refuses any executable other than 1.09: every address in the runtime is

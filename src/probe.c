@@ -9,6 +9,7 @@
 #include <cpuid.h>
 #endif
 #include "runtime.h"
+#include "runtime_patches.h"
 #include "runtime_prepare.h"
 #include "cpu/bbcpu.h"
 #include "gpu/bbgpu.h"
@@ -344,8 +345,7 @@ static int mapped(Segment *segments, uint64_t count, uint64_t address, uint64_t 
 /* BBPATCH2 (patches.py): the patches' image base, then byte writes at image offsets, applied
  * after relocation. A write may replace a whole base-relative pointer slot (60/90 FPS++ swap
  * function pointers): the patch holds the address at the patches' base, rebased here. */
-static void apply_patches(const char *path, Segment *segments, uint64_t ns, const Reloc *relocs, uint64_t nr) {
-    FILE *f=fopen(path,"rb");
+static void apply_patches(FILE *f, Segment *segments, uint64_t ns, const Reloc *relocs, uint64_t nr) {
     char magic[8];
     if (!f || fread(magic,1,8,f)!=8 || memcmp(magic,"BBPATCH2",8)) fail("invalid patch file");
     uint64_t base=read64(f), count=read64(f), bytes=0, rebased=0;
@@ -459,6 +459,13 @@ static void *game_thread(void *unused) {
 #endif
 
 int main(int argc, char **argv) {
+    /* --print-scaled SETTINGS (run.sh, before starting): the render and output sizes bbport.ini
+     * selects, "RENDER OUTPUT" (WxH), or nothing at native 1080p (runtime_patches.c). */
+    if (argc==3 && !strcmp(argv[1],"--print-scaled")) {
+        int render[2], output[2];
+        if (bb_patches_scaled_sizes(argv[2],render,output)) printf("%dx%d %dx%d\n",render[0],render[1],output[0],output[1]);
+        return 0;
+    }
     setvbuf(stdout, NULL, _IONBF, 0);
 #if !defined(_WIN32) && !defined(__APPLE__)
     /* Keep host heap objects handed to the guest (thread handles, TLS) in the
@@ -721,7 +728,40 @@ int main(int argc, char **argv) {
         memcpy(image + relocs[i].target, &value, 8);
     }
     runtime_net_image_mapped(image, size);
-    if (patch_file) apply_patches(patch_file, segments, ns, relocs, nr);
+    if (patch_file) {
+        /* `-`: patches.bin built here from the patch file, bbport.ini and the player's patch folder
+         * (runtime_patches.c), with the inputs run.sh gave scripts/patches.py. */
+        uint8_t *patch_memory=NULL;
+        size_t patch_size=0;
+        FILE *pf;
+        if (!strcmp(patch_file,"-")) {
+            const char *data=getenv("BB_DATA_DIR") ? getenv("BB_DATA_DIR") : ".";
+            char patches_dir[4096], patches_config[4096], error[1024];
+            snprintf(patches_dir,sizeof(patches_dir),"%s/patches",data);
+            snprintf(patches_config,sizeof(patches_config),"%s/patches.json",data);
+            const BbPatchOptions options={
+                .xml=getenv("BB_PATCHES_XML") ? getenv("BB_PATCHES_XML") : "patches/Bloodborne.xml",
+                .settings=getenv("BB_CONFIG") ? getenv("BB_CONFIG") : "bbport.ini",
+                .game_dir=app0 ? app0 : ".",
+                .patches_dir=getenv("BB_PATCHES_DIR") ? getenv("BB_PATCHES_DIR") : patches_dir,
+                .patches_config=getenv("BB_PATCHES_CONFIG") ? getenv("BB_PATCHES_CONFIG") : patches_config,
+                .fps=getenv("BB_FPS") && *getenv("BB_FPS") ? getenv("BB_FPS") : "uncap",
+                .extra=getenv("BB_PATCHES"),
+                .render_res=getenv("BB_RENDER_RES"),
+                .app_version="01.09",
+            };
+            if (bb_patches_build(&options,&patch_memory,&patch_size,error,sizeof(error))) {
+                fprintf(stderr,"Patches: %s\n",error);
+                fail("cannot build the game's patches");
+            }
+            pf=fmemopen(patch_memory,patch_size,"rb");
+        } else {
+            pf=fopen(patch_file,"rb");
+        }
+        if (!pf) fail("invalid patch file");
+        apply_patches(pf, segments, ns, relocs, nr); /* closes pf */
+        free(patch_memory);
+    }
     if (!cpu_only) bbgpu_patch_image(image, size);
     protect(traps, round_page((import_count + 1) * 32), 5);
     protect(image, round_page(size), 0);
