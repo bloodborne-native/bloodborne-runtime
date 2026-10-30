@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#endif
 #include <chrono>
 #include <array>
 #include <atomic>
@@ -528,7 +531,14 @@ bool Detail::ComputeGuestInPlace() {
 }
 
 static constexpr size_t GDS_BUFFER_SIZE = 64_KB;
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+// iOS: one buffer of 128 MiB needed a free block of that size, which the game started from the
+// iPhone launcher did not have. Uploads through it are at most STREAM_THRESHOLD (16 KiB) each:
+// a smaller ring only wraps more often.
+static constexpr size_t STREAM_BUFFER_SIZE = 32_MB;
+#else
 static constexpr size_t STREAM_BUFFER_SIZE = 128_MB;
+#endif
 
 static constexpr auto ARENA_USAGE =
     vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eTransferDst |
