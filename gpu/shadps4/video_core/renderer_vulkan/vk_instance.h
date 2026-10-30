@@ -345,8 +345,14 @@ public:
 #endif
     }
 
-    /// bbport: FSR 4.1.1 (INT8 model passes and VK_VALVE_shader_mixed_float_dot_product).
+    /// bbport: FSR 4.1 (exact-fast; INT8 model passes and VK_VALVE_shader_mixed_float_dot_product
+    /// off macOS, the Metal backend on macOS).
     bool IsFsr411Supported() const;
+    /// bbport: FSR 4.1 Lossy (lossy2): the Metal backend only (the Vulkan provider has no
+    /// trained-layer variant here).
+    bool IsFsr411LossySupported() const;
+    /// bbport: FSR 4.1.2 INT8 Lite: the Metal backend only.
+    bool IsFsr412Supported() const;
 
     /// bbport: FSR 4.1.1's FP8 matrix variant (RDNA4): FP8 cooperative matrices, the Vulkan
     /// memory model, wave32 in full subgroups.

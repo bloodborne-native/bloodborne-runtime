@@ -33,10 +33,10 @@ inline const char *kernels_label(Kernels k) {
 // ExactFast: Exact's network with reciprocal division and fast exp/log in
 // PRE/POST. Lossy: folded coefficients, half-up rounding and inference reuse.
 // Lossy2: Lossy's network with the six layers trained in upstream dll-2026-10-19.
-enum class Profile { Exact, Lossy, ExactFast, Lossy2 };
+enum class Profile { Exact, Lossy, ExactFast, Lossy2, Int8Lite };
 inline bool profile_is_lossy(Profile p) { return p==Profile::Lossy || p==Profile::Lossy2; }
 inline const char *profile_name(Profile p) {
-    return p==Profile::Lossy?"lossy":p==Profile::Lossy2?"lossy2":p==Profile::ExactFast?"exact-fast":"exact";
+    return p==Profile::Int8Lite?"int8-lite":p==Profile::Lossy?"lossy":p==Profile::Lossy2?"lossy2":p==Profile::ExactFast?"exact-fast":"exact";
 }
 inline bool parse_profile(const std::string &name, Profile &p) {
     if(name=="exact") p=Profile::Exact;
@@ -70,11 +70,18 @@ struct FrameSnapshot {
     }
 };
 struct Options {
+    // The 4.1.2 adapter selects its own imported graph and cache namespace.
+    // Input conversion, resource lifetime and encoder synchronization are shared.
+    bool modelLite = false;
     Backend backend = Backend::Auto;
     Profile profile = Profile::Lossy;
     int tier = 0, colorspace = 0, optimize = 1;
     // bbport: no allowCompile: nothing is built while the game runs (build_assets.py).
     bool rcas = false, ultraPerformance = false;
+    // FSR 4.1.2 only: widen POST's current-frame filter where history is rejected.
+    bool pixelFix = false;
+    // Lower bound of the widening, 0..1 (1 = off); POST reads it from `pad`.
+    float pixelFixFloor = 0.6f;
     // Tests only: Exact Fast/Lossy PRE/POST with ordered arithmetic, so their
     // optimized graph can be compared bit for bit with the imported HLSL.
     bool strictMath = false;
@@ -206,6 +213,8 @@ struct Kernel {
     id<MTLBuffer> literalTables = nil;
     MTLSize threads = MTLSizeMake(1, 1, 1);
     std::vector<std::pair<NSUInteger, std::string>> buffers, textures, samplers;
+    int tensorSlot = -1;
+    unsigned tileX = 1, tileY = 1;
 };
 struct NativePass {
     id<MTLComputePipelineState> pso = nil;
@@ -219,7 +228,9 @@ struct Session {
     int tier = 0;
     uint32_t postPixelsPerGroup = 32;
     bool splitAutoExposure = false;
+    bool modelLite = false;
     size_t scratchBytes = 0;
+    bool preparedColor = false;
     bool ultraPerformance = false, externalPostCnb = false;
     bool postCnbAlias = false;
     PostCnbScratchLayout scratchLayout = {};
@@ -228,6 +239,7 @@ struct Session {
     id<MTLBuffer> initializer = nil, nativeWeights = nil, halfWeights = nil;
     std::map<std::string, Kernel> kernels;
     std::map<int, NativePass> native;
+    std::map<std::string,std::vector<int>> nativeSequence;
     std::vector<std::string> order;
 };
 
@@ -257,6 +269,7 @@ struct View {
     id<MTLBuffer> lossyMotion = nil, lossyPlane = nil;
     id<MTLTexture> spdAtomicTexture = nil, luma = nil;
     id<MTLTexture> colorCopy = nil, depthCopy = nil, motionCopy = nil, outputCopy = nil, rcasTemp = nil;
+    id<MTLTexture> preparedColor = nil;
     std::map<std::string, id<MTLBuffer>> captures;
     std::vector<std::unique_ptr<FrameSlot>> slots;
     uint32_t width = 0, height = 0;
@@ -275,9 +288,12 @@ public:
     Runtime(id<MTLDevice> dev, const std::string &root, std::vector<std::string> initializerDirs)
         : device_(dev), root_(root), initializerDirs_(std::move(initializerDirs)) {}
 
-    // bbport: the folder of the native network for a tier and model (Lossy only).
-    static std::string native_dir(int tier, bool ultraPerformance) {
-        return "fsr411_native_" + std::to_string(tier) + (ultraPerformance ? "_ultraperformance" : "") + "_lossy";
+    // bbport: the folder of the built native network for a tier, preset and model.
+    // FSR 4.1 exact-fast and 4.1.2 Lite have no suffix; 4.1 Lossy (lossy2) has "_lossy2".
+    static std::string native_dir(int tier, bool ultraPerformance, bool modelLite, Profile profile) {
+        return (modelLite ? "fsr412_native_" : "fsr411_native_") + std::to_string(tier)
+            + (ultraPerformance ? "_ultraperformance" : "")
+            + (!modelLite && profile == Profile::Lossy2 ? "_lossy2" : "");
     }
     static std::string sha256_hex(NSData *data) {
         unsigned char digest[CC_SHA256_DIGEST_LENGTH];
@@ -286,41 +302,76 @@ public:
         for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; ++i) snprintf(hex + 2 * i, 3, "%02x", digest[i]);
         return hex;
     }
-    // bbport: AMD's initializer for this model, from the player's folders (also the Vulkan FSR
+    // bbport: AMD's initializer for a model, from the player's folders (also the Vulkan FSR
     // 4.1.1 path's asset sets, t<tier>_m<model>/initializer.bin), accepted only with the SHA-256
-    // the native manifest names: the exact file its weight recipe was checked against.
+    // the native manifest names: the exact file its weight recipe was checked against. The
+    // 4.1/4.1-Lossy networks share the 131,072-byte 4.1.1 pair; 4.1.2 Lite has its own
+    // 27,392-byte pair.
     static NSData *find_initializer(const std::string &root, const std::vector<std::string> &dirs,
-                                    bool ultraPerformance, std::string &error) {
-        const std::string name = ultraPerformance ? "initializers-ultraperformance.bin" : "initializers.bin";
-        NSData *manifestData = [NSData dataWithContentsOfFile:ns(root + "/" + native_dir(1080, ultraPerformance)
-                                                                 + "/fsr411_native_manifest.json")];
-        NSDictionary *manifest = manifestData ? [NSJSONSerialization JSONObjectWithData:manifestData options:0 error:nil] : nil;
-        NSString *expected = [manifest isKindOfClass:[NSDictionary class]] ? manifest[@"initializer_sha256"] : nil;
-        if (!expected) { error = "the FSR 4.1.1 Metal files were not built (" + root + ")"; return nil; }
-        const std::string model = ultraPerformance ? "_m1" : "_m0";
+                                    bool ultraPerformance, bool modelLite, std::string &error) {
+        const std::string name = modelLite
+            ? (ultraPerformance ? "initializers-lite-ultraperformance.bin" : "initializers-lite.bin")
+            : (ultraPerformance ? "initializers-ultraperformance.bin" : "initializers.bin");
+        NSString *expected = nil;
+        for (const std::string &native : {native_dir(1080, ultraPerformance, modelLite, Profile::ExactFast),
+                                          native_dir(1080, ultraPerformance, modelLite, Profile::Lossy2)}) {
+            NSData *manifestData = [NSData dataWithContentsOfFile:ns(root + "/" + native + "/fsr411_native_manifest.json")];
+            if (!manifestData) continue;
+            NSDictionary *manifest = [NSJSONSerialization JSONObjectWithData:manifestData options:0 error:nil];
+            if ([manifest isKindOfClass:[NSDictionary class]] && manifest[@"initializer_sha256"]) {
+                expected = manifest[@"initializer_sha256"];
+                break;
+            }
+        }
+        if (!expected) {
+            error = "the FSR " + std::string(modelLite ? "4.1.2" : "4.1") + " Metal files were not built (" + root + ")";
+            return nil;
+        }
+        const size_t size = modelLite ? 27392 : 131072;
         bool wrong = false;
         for (const auto &dir : dirs) {
-            for (const std::string &file : {dir + "/" + name, dir + "/t1080" + model + "/initializer.bin",
-                                            dir + "/t2160" + model + "/initializer.bin"}) {
+            std::vector<std::string> files = {
+                dir + "/" + name,
+                dir + "/" + (modelLite ? "fsr4_412" : "fsr4_411") + "/" + name,
+            };
+            if (!modelLite) {
+                const std::string model = ultraPerformance ? "_m1" : "_m0";
+                files.push_back(dir + "/t1080" + model + "/initializer.bin");
+                files.push_back(dir + "/t2160" + model + "/initializer.bin");
+            }
+            for (const std::string &file : files) {
                 NSData *data = [NSData dataWithContentsOfFile:ns(file)];
                 if (!data) continue;
-                if (data.length == 131072 && sha256_hex(data) == utf8(expected)) return data;
+                if (data.length == size && sha256_hex(data) == utf8(expected)) return data;
                 wrong = true;
             }
         }
-        error = wrong ? "AMD's " + name + " is not the FSR 4.1.1.2740 one"
+        const std::string version = modelLite ? "4.1.2" : "4.1.1.2740";
+        error = wrong ? "AMD's " + name + " is not the FSR " + version + " one"
                       : "AMD's " + name + " is missing (tools/fsr4_metal_initializers.sh from your AMD DLL)";
         return nil;
     }
-    // bbport: everything a session needs is there (the menu offers FSR 4.1.1 only then).
-    static bool assets_ready(const std::string &root, const std::vector<std::string> &dirs, std::string &error) {
+    // bbport: everything a mode's session needs is there (the menu offers it only then).
+    static bool assets_ready(const std::string &root, const std::vector<std::string> &dirs411,
+                             const std::vector<std::string> &dirs412, Profile mode, std::string &error) {
         auto exists = [](const std::string &p) { return [[NSFileManager defaultManager] fileExistsAtPath:ns(p)]; };
-        for (const char *name : {"/fsr411_helpers.metallib", "/fsr411_simd.metallib",
-                                 "/fsr411_1080_di0_lm1_jm0_cs0_ae1_o1_lossy_pc1_ca1/bindings.json",
-                                 "/fsr411_native_1080_lossy/fsr411_native_recipe.bin"}) {
-            if (!exists(root + name)) { error = "the FSR 4.1.1 Metal files were not built (" + root + ")"; return false; }
+        const bool modelLite = mode == Profile::Int8Lite;
+        const std::string version = modelLite ? "4.1.2" : mode == Profile::Lossy2 ? "4.1 Lossy" : "4.1";
+        for (const char *name : {"/fsr411_helpers.metallib", "/fsr411_simd.metallib"}) {
+            if (!exists(root + name)) { error = "the FSR " + version + " Metal files were not built (" + root + ")"; return false; }
         }
-        return find_initializer(root, dirs, false, error) != nil;
+        const std::string key = modelLite
+            ? "fsr412_1080_di0_lm1_jm0_cs0_ae1_o1_up0_pc1_v2"
+            : std::string("fsr411_1080_di0_lm1_jm0_cs0_ae1_o1")
+                  + (mode == Profile::Lossy2 ? "_lossy2" : "_fast") + "_pc1_ca1";
+        const std::string native = native_dir(1080, false, modelLite, mode);
+        const std::string weights = modelLite ? "/fsr412_native_weights_recipe.bin" : "/fsr411_native_recipe.bin";
+        const std::string params = "/fsr411_native_params.bin";
+        for (const std::string &path : {"/" + key + "/bindings.json", "/" + native + "/fsr411_native_manifest.json",
+                                        "/" + native + weights, "/" + native + params}) {
+            if (!exists(root + path)) { error = "the FSR " + version + " Metal files were not built (" + root + ")"; return false; }
+        }
+        return find_initializer(root, modelLite ? dirs412 : dirs411, false, modelLite, error) != nil;
     }
 
     // bbport: the native weights are bytes of AMD's initializer and constants of the MIT HLSL
@@ -439,7 +490,6 @@ public:
         }
         return weights;
     }
-
     bool copy_output(id cb, View &lifetime, id<MTLTexture> source, Fsr4InputRect sourceRect,
                      id<MTLTexture> output, Fsr4InputRect outputRect, std::string &error) {
         if (!source || !output || sourceRect.width != outputRect.width || sourceRect.height != outputRect.height
@@ -498,12 +548,14 @@ public:
             : options.backend==Backend::Scalar ? Kernels::Scalar
             : (options.backend==Backend::Simd || (simd_family() && !simdFailed_)) ? Kernels::Simd : Kernels::Scalar;
         if (!ensure_helpers(error)) return fail(error);
-        Session *session = ensure_session(tier, p, options, kind, error);
+        Session *session = options.modelLite ? ensure_lite_session(tier,p,options,kind,error)
+                                             : ensure_session(tier,p,options,kind,error);
         if (!session && kind==Kernels::Simd && options.backend==Backend::Auto) {
             // Never retry a failed simd setup on this device; scalar is exact too.
             fsr4_logf("FSR 4.1.1 simd backend unavailable (%s); using scalar", error.c_str());
             simdFailed_ = true; kind = Kernels::Scalar; error.clear();
-            session = ensure_session(tier, p, options, kind, error);
+            session = options.modelLite ? ensure_lite_session(tier,p,options,kind,error)
+                                        : ensure_session(tier,p,options,kind,error);
         }
         if (!session) return fail(error);
         const bool native_or_portable = kind != Kernels::Reference;
@@ -523,7 +575,13 @@ public:
         const bool skip = lossy && view.cacheValid && !view.skippedInference && !p.reset && p.jitter[0]<0.f
             && uint64_t(p.rw)*2u>=p.alignedUW && !options.ultraPerformance;
         TensorSizes sizes = tensor_sizes(p.alignedUW, p.alignedUH);
-        fill_constants(*slot, *session, p, sizes, rcas, options.sharpness);
+        if(options.modelLite) {
+            constexpr unsigned shifts[9]={1,0,1,2,2,1,0,0,0};
+            sizes={};
+            for(unsigned i=0;i<9;++i) {sizes.v[i][0]=p.alignedUW>>shifts[i];sizes.v[i][1]=p.alignedUH>>shifts[i];}
+        }
+        fill_constants(*slot, *session, p, sizes, rcas, options.sharpness,
+                       options.pixelFix ? std::clamp(options.pixelFixFloor, 0.f, 1.f) : 0.f);
         const LossyConstants lc={skip?1u:0u,p.alignedUW/4u,p.alignedUH/4u,0};
         put(*slot,kLossy,lc);
         view.captures.clear();
@@ -607,18 +665,36 @@ public:
                 helper(enc, m4, *slot, "updateExposure", "fsr411_exposure",
                        {{slot->constants,9472}}, {b.exposure,view.autoExposure}, MTLSizeMake(1,1,1));
             }
+            if (session->preparedColor)
+                dispatch(enc,m4,*slot,*session,"prepare_color",MTLSizeMake(ceil_div(p.rw,16),ceil_div(p.rh,16),1),b);
             for (const auto &name : session->order) {
                 if (skip && name!="pre" && name!="post") continue;
                 if (name=="post" && session->externalPostCnb && !skip)
                     dispatch_native(enc,m4,*slot,*session,13,view,sizes);
                 const int pass = name.rfind("pass",0) == 0 ? std::atoi(name.c_str()+4) : 0;
-                if (native_or_portable && pass && session->native.count(pass)) {
+                auto sequence=session->nativeSequence.find(name);
+                if(native_or_portable && sequence!=session->nativeSequence.end()) {
+                    for(int id:sequence->second) dispatch_native(enc,m4,*slot,*session,id,view,sizes);
+                } else if (native_or_portable && pass && session->native.count(pass)) {
                     dispatch_native(enc, m4, *slot, *session, pass, view, sizes);
                 } else {
                     MTLSize groups;
                     if (name == "pre") groups = MTLSizeMake(ceil_div(p.alignedUW,16),ceil_div(p.alignedUH,16),1);
                     else if (name == "post") groups = MTLSizeMake(ceil_div(p.alignedUW,session->postPixelsPerGroup),ceil_div(p.alignedUH,session->postPixelsPerGroup),1);
+                    else if (session->modelLite && name.rfind("pad",0)==0) {
+                        const auto &k=session->kernels.at(name);
+                        const unsigned shift=(k.tensorSlot==3 || k.tensorSlot==4)?2:1;
+                        const uint32_t w=p.alignedUW>>shift,h=p.alignedUH>>shift;
+                        const uint32_t c=std::min((uint32_t(tier*16/9)>>shift)+1u-w,5u);
+                        const uint32_t d=std::min((uint32_t(tier)>>shift)+1u-h,1u);
+                        const uint32_t f=w+1u+c;
+                        groups=MTLSizeMake(ceil_div(f+h+h*c+f*d,32),1,1);
+                    }
                     else if (name.rfind("pad",0) == 0) groups = MTLSizeMake(padding_groups(tier,std::atoi(name.c_str()+3),p.alignedUW,p.alignedUH),1,1);
+                    else if(session->modelLite) {
+                        const auto &k=session->kernels.at(name);
+                        groups=MTLSizeMake(ceil_div(sizes.v[k.tensorSlot][0],k.tileX),ceil_div(sizes.v[k.tensorSlot][1],k.tileY),1);
+                    }
                     else { const int shift = pass_shift(pass); groups = MTLSizeMake(ceil_div(p.alignedUW >> shift,64),p.alignedUH >> shift,1); }
                     // Older precompiled bundles use the shared PRE. New
                     // bundles specialize only the already-authorized reuse
@@ -810,6 +886,7 @@ private:
         }
         if (!v.autoExposure) v.autoExposure=texture(MTLPixelFormatR32Float,2,1);
         bool ok = v.scratch && v.history && v.reprojected && v.recurrent && v.autoExposure;
+        if (s.preparedColor) ok &= fit(v.preparedColor,MTLPixelFormatRGBA32Float,p.rw,p.rh);
         if(profile_is_lossy(o.profile)) {
             const size_t blocks=size_t(p.alignedUW/4u)*(p.alignedUH/4u);
             if(!v.lossyMotion || v.lossyMotion.length!=blocks*16u)
@@ -877,22 +954,27 @@ private:
     bool load_native(Session &s, bool compile, Kernels kind, std::string &error) {
         (void)compile;
         const bool useMpp=kind==Kernels::Mpp, useSimd=kind==Kernels::Simd;
-        // bbport: the built Lossy network (build_assets.py), with weights assembled from the
+        // bbport: the built networks (build_assets.py), with weights assembled from the
         // player's initializer (assemble_weights); simd and M5 kernels only.
-        if (!useMpp && !useSimd) { error="this build has only the simd and M5 FSR 4.1.1 kernels"; return false; }
-        if (s.profile!=Profile::Lossy) { error="this build has only the Lossy FSR 4.1.1 network"; return false; }
-        const std::string dir=root_+"/"+native_dir(s.tier,s.ultraPerformance);
+        if (!useMpp && !useSimd) { error="this build has only the simd and M5 FSR 4.1.x kernels"; return false; }
+        if (s.profile!=Profile::ExactFast && s.profile!=Profile::Lossy2 && s.profile!=Profile::Int8Lite) {
+            error="this build has only the FSR 4.1 (exact-fast), 4.1 Lossy and 4.1.2 Lite networks"; return false;
+        }
+        const std::string dir=root_+"/"+(s.modelLite?"fsr412_native_":"fsr411_native_")+std::to_string(s.tier)
+            +(s.ultraPerformance?"_ultraperformance":"")
+            +(s.profile==Profile::Lossy2?"_lossy2":"");
         NSData *manifestData=[NSData dataWithContentsOfFile:ns(dir+"/fsr411_native_manifest.json")];
         NSMutableDictionary *manifest=manifestData?[NSJSONSerialization JSONObjectWithData:manifestData
             options:NSJSONReadingMutableContainers error:nil]:nil;
         if (![manifest isKindOfClass:[NSMutableDictionary class]] || [manifest[@"abi_version"] unsignedIntValue]!=kAbiVersion
-            || [manifest[@"parameter_size"] unsignedIntValue]!=sizeof(PassParams)) { error="native 4.1.1 manifest missing or ABI mismatch"; return false; }
-        NSData *recipe=[NSData dataWithContentsOfFile:ns(dir+"/fsr411_native_recipe.bin")];
+            || [manifest[@"parameter_size"] unsignedIntValue]!=sizeof(PassParams)) { error="native FSR manifest missing or ABI mismatch"; return false; }
+        const std::string recipeName=s.modelLite?"fsr412_native_weights_recipe.bin":"fsr411_native_recipe.bin";
+        NSData *recipe=[NSData dataWithContentsOfFile:ns(dir+"/"+recipeName)];
         NSData *weights=recipe?assemble_weights(manifest,recipe,
             [NSData dataWithBytesNoCopy:s.initializer.contents length:s.initializer.length freeWhenDone:NO],error):nil;
-        if (!weights) { if(error.empty()) error="missing native 4.1.1 weight recipe"; return false; }
+        if (!weights) { if(error.empty()) error="missing native FSR weight recipe"; return false; }
         NSData *params=[NSData dataWithContentsOfFile:ns(dir+"/fsr411_native_params.bin")];
-        if (!weights.length || !params.length) { error="missing native 4.1.1 weights/parameters"; return false; }
+        if (!weights.length || !params.length) { error="missing native weights/parameters"; return false; }
         if(weights.length != [manifest[@"weights_bytes"] unsignedLongLongValue]) {
             error="native 4.1.1 weight cache is incomplete; regenerate this model";return false;
         }
@@ -933,9 +1015,9 @@ private:
             if(!post || ![post[@"output_offset_base"] isEqual:@"scratch_append"]) { error="missing native 4.1.1 POST CNB";return false; }
             if([post[@"scratch_append_bytes"] unsignedLongLongValue]!=s.scratchLayout.cacheBytes ||
                [post[@"scratch_append_alignment"] unsignedIntValue]!=256u ||
-               ![post[@"kind"] isEqual:@"cnb"] || [post[@"input_slot"] unsignedIntValue]!=13u ||
-               [post[@"output_slot"] unsignedIntValue]!=13u || post[@"skip_slot"] ||
-               [post[@"before_stage"] unsignedIntValue]!=26u) {
+               ![post[@"kind"] isEqual:@"cnb"] || [post[@"input_slot"] unsignedIntValue]!=(s.modelLite?5u:13u) ||
+               [post[@"output_slot"] unsignedIntValue]!=(s.modelLite?5u:13u) || post[@"skip_slot"] ||
+               [post[@"before_stage"] unsignedIntValue]!=(s.modelLite?9u:26u)) {
                 error="native 4.1.1 POST CNB layout mismatch";return false;
             }
             passes[@"13"]=post;
@@ -951,7 +1033,7 @@ private:
             np.offset=[entry[@"parameter_offset"] unsignedIntValue];
             if (np.offset+sizeof(PassParams)>params.length || kNative+np.offset+sizeof(PassParams)>8192) { error="native parameter region overflow"; return false; }
             memcpy(&np.parameters,(const uint8_t *)params.bytes+np.offset,sizeof(PassParams));
-            if([key intValue]==13 && !post_cnb_tensors_match_layout(np.parameters,s.scratchLayout)) {
+            if([key intValue]==13 && !s.modelLite && !post_cnb_tensors_match_layout(np.parameters,s.scratchLayout)) {
                 error="native 4.1.1 POST CNB tensors do not match the scratch layout";return false;
             }
             // Winograd reads its transformed 3x3 weights from the half copy.
@@ -968,7 +1050,14 @@ private:
                                     withRange:NSMakeRange(0,kPassSpecializationCount)];
                     fn=[lib newFunctionWithName:ns(name) constantValues:values error:&e];
                 } else fn=[lib newFunctionWithName:ns(name)];
-                auto pso=fn?[device_ newComputePipelineStateWithFunction:fn error:&e]:nil;
+                id<MTLComputePipelineState> pso=nil;
+                if (fn && s.modelLite) {
+                    MTLComputePipelineDescriptor *descriptor=[MTLComputePipelineDescriptor new];
+                    descriptor.computeFunction=fn;
+                    descriptor.maxTotalThreadsPerThreadgroup=[dispatch[@"threads"] unsignedIntValue];
+                    descriptor.threadGroupSizeIsMultipleOfThreadExecutionWidth=descriptor.maxTotalThreadsPerThreadgroup%32u==0;
+                    pso=[device_ newComputePipelineStateWithDescriptor:descriptor options:MTLPipelineOptionNone reflection:nil error:&e];
+                } else if (fn) pso=[device_ newComputePipelineStateWithFunction:fn error:&e];
                 if (!pso) { error=metal_error(e); return false; }
                 if (pso.maxTotalThreadsPerThreadgroup < [dispatch[@"threads"] unsignedIntValue]) {
                     error="pipeline "+name+" supports fewer threads than its tile needs"; return false;
@@ -986,6 +1075,8 @@ private:
         }
         return s.nativeWeights && !s.native.empty();
     }
+    #include "fsr412_session.inc"
+
     Session *ensure_session(int tier, const Fsr4InputPrepared &p, const Options &o, Kernels kind, std::string &error) {
         const bool portable=kind!=Kernels::Reference;
         const bool externalPost=portable || profile_is_lossy(o.profile);
@@ -1050,7 +1141,7 @@ private:
             }
         }
         // bbport: AMD's initializer from the player's folders, never shipped.
-        NSData *init=find_initializer(root_,initializerDirs_,o.ultraPerformance,error);
+        NSData *init=find_initializer(root_,initializerDirs_,o.ultraPerformance,false,error);
         if (!init) return nullptr;
         if (!s->scratchBytes) { error="invalid FSR 4.1.1 bindings (no scratch)"; return nullptr; }
         s->initializer=[device_ newBufferWithBytes:init.bytes length:init.length options:MTLResourceStorageModeShared];
@@ -1113,7 +1204,7 @@ private:
     template <typename T> static void put(FrameSlot &slot, NSUInteger offset, const T &value) {
         memcpy((uint8_t *)slot.constants.contents+offset,&value,sizeof(T));
     }
-    void fill_constants(FrameSlot &slot, const Session &s, const Fsr4InputPrepared &p, const TensorSizes &sizes, bool rcas, float sharpness) {
+    void fill_constants(FrameSlot &slot, const Session &s, const Fsr4InputPrepared &p, const TensorSizes &sizes, bool rcas, float sharpness, float pixelFixFloor = 0.f) {
         FrameConstants c={};
         c.inv_size[0]=1.f/p.alignedUW; c.inv_size[1]=1.f/p.alignedUH;
         c.scale[0]=float(p.alignedUW)/p.rw; c.scale[1]=float(p.alignedUH)/p.rh;
@@ -1124,7 +1215,7 @@ private:
         memcpy(c.jitterCancellation,p.jitterCancellation,sizeof c.jitterCancellation);
         c.width=p.alignedUW; c.height=p.alignedUH; c.width_lr=p.rw; c.height_lr=p.rh;
         c.reset=p.reset; c.preExposure=p.preExposure; c.previousPreExposure=p.previousPreExposure;
-        c.rcas=rcas; c.sharpness=sharpness; put(slot,0,c); put(slot,kTensor,sizes);
+        c.rcas=rcas; c.sharpness=sharpness; c.pad=pixelFixFloor; put(slot,0,c); put(slot,kTensor,sizes);
         SpdConstants ae={}; ae.mips=std::clamp(uint32_t(std::floor(std::log2(std::max(p.rw,p.rh)))),1u,12u);
         ae.groups=ceil_div(p.rw,64)*ceil_div(p.rh,64); ae.invInputSize[0]=1.f/p.rw; ae.invInputSize[1]=1.f/p.rh;
         ae.preExposure=p.preExposure; ae.validSize[0]=p.rw; ae.validSize[1]=p.rh; put(slot,kSpd,ae);
@@ -1168,7 +1259,7 @@ private:
         // the GPU. Keep the old resources alive until its retirement token.
         const id resources[]={slot.constants,s.initializer,s.nativeWeights,s.halfWeights,v.history,v.reprojected,v.recurrent,v.autoExposure,
             v.scratch,v.spdAtomic,v.spdAtomicTexture,v.luma,v.colorCopy,v.depthCopy,v.motionCopy,v.outputCopy,v.rcasTemp,v.lossyMotion,v.lossyPlane,
-            f.color,f.depth,f.motion,f.output,f.exposure,exposureOne_};
+            f.color,f.depth,f.motion,f.output,f.exposure,exposureOne_,v.preparedColor};
         for (id resource:resources) if(resource && ![slot.resources containsObject:resource]) [slot.resources addObject:resource];
         for(const auto &k:s.kernels) if(k.second.literalTables) [slot.resources addObject:k.second.literalTables];
         for (const auto &c:v.captures) [slot.resources addObject:c.second];
@@ -1233,6 +1324,7 @@ private:
     }
     id<MTLTexture> bind_texture(const std::string &name,const Bindings &b) {
         if(name=="r_input_color") return b.color;
+        if(name=="r_prepared_color" || name=="rw_prepared_color") return b.view->preparedColor;
         if(name=="r_depth") return b.depth;
         if(name=="r_velocity") return b.motion;
         if(name=="r_input_exposure") return b.exposure;
@@ -1254,7 +1346,7 @@ private:
         if(name=="Fsr411LossyMotion") return {b.view->lossyMotion,0};
         if(name=="Fsr411LossyPlane") return {b.view->lossyPlane,0};
         if(name=="InitializerBuffer" || name=="t18_initializer") return {s.initializer,0};
-        if(name=="MLSR_Optimized_Constants") return {slot.constants,(stage=="pre" || stage=="pre_reuse" || stage=="post")?0:kTensor};
+        if(name=="MLSR_Optimized_Constants") return {slot.constants,(stage=="pre" || stage=="pre_reuse" || stage=="post" || stage=="prepare_color")?0:kTensor};
         if(name=="CsTensorSizes") return {slot.constants,kTensor};
         if(name=="AutoExposureSPDConstants") return {slot.constants,kSpd};
         if(name=="cbRCAS") return {slot.constants,kRcas};

@@ -296,19 +296,28 @@ void Load() {
     v.startup_live_resolution = v.live_resolution;
 }
 
-void ConfigureUpscalerSupport(bool fsr4, bool fsr411, bool metalfx, bool metalfx_only) {
+void ConfigureUpscalerSupport(bool fsr4, bool fsr411, bool fsr411_lossy, bool fsr412, bool metalfx,
+                              bool metalfx_only) {
     auto& v = Get();
+    // FSR 4.0.2 and FSR 3.1 are Vulkan-provider upscalers: on the Metal renderer they become
+    // MetalFX. The FSR 4.1.x modes are native Metal (vk_fsr4_metal reaches the frame's textures
+    // through VK_EXT_metal_objects on both renderers), so they stay available there.
     v.fsr4_supported = fsr4 && !metalfx_only;
 #ifdef __APPLE__
-    v.fsr411_supported = fsr411 && !metalfx_only;
+    v.fsr411_supported = fsr411;
+    v.fsr411_lossy_supported = fsr411_lossy;
+    v.fsr412_supported = fsr412;
 #else
+    // The Vulkan provider behind fsr411 is the only FSR 4.1.x mode off macOS.
     v.fsr411_supported = fsr4 && fsr411;
+    v.fsr411_lossy_supported = false;
+    v.fsr412_supported = false;
 #endif
     v.fsr3_supported = !metalfx_only;
     v.metalfx_supported = metalfx;
     const int requested = v.upscaler;
     if (metalfx_only && (requested == UpscalerFsr3 || requested == UpscalerFsr4 ||
-                         requested == UpscalerFsr411 || requested == UpscalerDlss)) {
+                         requested == UpscalerDlss)) {
         v.upscaler = metalfx ? UpscalerMetalFx : UpscalerOff;
         std::printf("Upscaler: %s is not offered on the Metal renderer; %s before the first frame\n",
                     UpscalerName(requested), metalfx ? "MetalFX" : "upscaler off");
@@ -321,11 +330,20 @@ void ConfigureUpscalerSupport(bool fsr4, bool fsr411, bool metalfx, bool metalfx
         return;
     }
     if ((requested == UpscalerFsr4 && !v.fsr4_supported) ||
-        (requested == UpscalerFsr411 && !v.fsr411_supported)) {
-        v.fsr4_problem = "GPU does not support the selected FSR 4 shaders; using FSR 3.1";
-        std::printf("Upscaler: %s unsupported on this GPU; falling back to FSR 3.1 before the first frame\n",
-                    UpscalerName(requested));
-        v.upscaler = UpscalerFsr3;
+        (requested == UpscalerFsr411 && !v.fsr411_supported) ||
+        (requested == UpscalerFsr411Lossy && !v.fsr411_lossy_supported) ||
+        (requested == UpscalerFsr412 && !v.fsr412_supported)) {
+        v.fsr4_problem = "the GPU or the built Metal assets do not support the selected FSR 4 mode";
+        if (metalfx_only) {
+            // The Metal renderer has no FSR 3.1 provider to fall back to.
+            v.upscaler = metalfx ? UpscalerMetalFx : UpscalerOff;
+            std::printf("Upscaler: %s unsupported; falling back to %s before the first frame\n",
+                        UpscalerName(requested), metalfx ? "MetalFX" : "off");
+        } else {
+            std::printf("Upscaler: %s unsupported on this GPU; falling back to FSR 3.1 before the first frame\n",
+                        UpscalerName(requested));
+            v.upscaler = UpscalerFsr3;
+        }
     }
 }
 
@@ -715,8 +733,8 @@ const char* PresetName(int preset) {
 }
 
 const char* UpscalerName(int upscaler) {
-    static constexpr const char* names[UpscalerCount] = {"off", "fsr3", "fsr4", "fsr411", "taa",
-                                                         "dlss", "metalfx"};
+    static constexpr const char* names[UpscalerCount] = {
+        "off", "fsr3", "fsr4", "fsr411", "taa", "dlss", "metalfx", "fsr411-lossy", "fsr412"};
     return names[std::clamp(upscaler, 0, UpscalerCount - 1)];
 }
 

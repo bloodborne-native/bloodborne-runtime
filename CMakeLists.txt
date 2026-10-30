@@ -187,6 +187,9 @@ add_executable(bb-gpu-capabilities tools/gpu_capabilities.c)
 target_compile_options(bb-gpu-capabilities PRIVATE -std=c11 ${BB_WARNINGS})
 target_link_libraries(bb-gpu-capabilities PRIVATE PkgConfig::SDL3)
 if (APPLE)
+    # The launcher runs it from the bundle's MacOS/: its SDL3 comes from Frameworks/.
+    set_target_properties(bb-gpu-capabilities PROPERTIES
+        INSTALL_RPATH "@executable_path/../Frameworks")
     bb_check_metal_link(bbprobe)
     bb_check_metal_link(bb-gpu-capabilities)
 endif()

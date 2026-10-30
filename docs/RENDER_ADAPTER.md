@@ -124,7 +124,7 @@ pipeline states in a binary archive between sessions.
   present mode comes from the settings. The Metal backend presents into the window's
   `CAMetalLayer` with no Vulkan surface.
 - `NativeHandle(object)` gives the backend's object to code that must call a vendor library:
-  FidelityFX (FSR 3.1), FSR 4 and DLSS on the Vulkan backend, MetalFX and FSR 4.1.1
+  FidelityFX (FSR 3.1), FSR 4 and DLSS on the Vulkan backend, MetalFX and FSR 4.1.x
   (`vk_fsr4_metal`) on macOS, and the overlay's Dear ImGui renderer.
 
 ## Steps
@@ -179,7 +179,7 @@ before it (M3 Pro, copied saves, alternating runs; "Iosefka's Clinic" is the tes
 - **The Vulkan backend's own parts.** VMA, the sparse guest arena and its fault manager and the
   guest-memory chunks used in place (Linux), the readback queue, the Vulkan presenter and the
   temporal upscaler class with FidelityFX, FSR 4 and DLSS.
-- **The MoltenVK fallback on macOS** (`BB_METAL_FRAME=0`), with FSR 3.1 and FSR 4.1.1, until M4
+- **The MoltenVK fallback on macOS** (`BB_METAL_FRAME=0`), with FSR 3.1 and FSR 4.1.x, until M4
   is accepted.
 
 ## Decisions
@@ -193,11 +193,12 @@ Taken by the maintainer. The numbers are cited in code comments; they do not cha
 3. **One backend per process.** Chosen at start-up; no mixed-backend frame.
 4. **MoltenVK stays as a fallback** on macOS, selectable with `BB_METAL_FRAME=0`, until M4 is
    accepted. (This replaced the plan to remove it with M4.)
-5. **Upscalers by backend.** The Metal backend offers MetalFX only: a setting asking for FSR 3.1,
-   FSR 4, FSR 4.1.1 or DLSS runs MetalFX (`ConfigureUpscalerSupport`'s `metalfx_only`). FSR 3.1,
-   FSR 4 and DLSS belong to the Vulkan backend; on macOS FSR 3.1 and FSR 4.1.1 are offered only
-   with the MoltenVK fallback (`vk_fsr4_metal` runs FSR 4.1.1 in Metal but reaches its images
-   through MoltenVK). The upscaler is off by default. (This replaced porting FSR 3.1 to Metal.)
+5. **Upscalers by backend.** The Metal backend offers MetalFX for FSR 3.1, FSR 4.0.2 and DLSS
+   (`ConfigureUpscalerSupport`'s `metalfx_only`), and the native FSR 4.1.x modes themselves:
+   `vk_fsr4_metal` encodes them on the frame's own command buffer, reaching the frame's
+   MTLTextures through the Metal layer's direct accessors. The MoltenVK fallback also offers
+   FSR 4.1.x, through `VK_EXT_metal_objects`. FSR 3.1 and DLSS otherwise belong to the Vulkan
+   backend. The upscaler is off by default.
 6. **How Vulkan leaves the Metal path.** The Metal backend answers the Vulkan entry points the
    shared renderer calls, so neither the Vulkan loader nor MoltenVK is linked or loaded on the
    native path, while Vulkan's headers stay the shared code's vocabulary (Vulkan is the backend

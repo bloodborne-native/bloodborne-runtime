@@ -54,14 +54,14 @@ file(MAKE_DIRECTORY "${BB_DEPS_PREFIX}" "${BB_DEPS_DOWNLOAD}")
 file(GLOB BB_DEPS_STEP_FILES CONFIGURE_DEPENDS ${BB_DEPS_STEPS}/*.cmake)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${BB_DEPS_STEP_FILES})
 
-# FSR 4.1.1 on Metal needs DXC and SPIRV-Cross commands, clang-format for DXC's generated sources
+# FSR 4.1.x on Metal needs DXC and SPIRV-Cross commands, clang-format for DXC's generated sources
 # and spirv-val to check the kernels.
-option(BB_DEPS_FSR4 "FSR 4.1.1 on Metal assets (clang-format and spirv-val needed)" ON)
+option(BB_DEPS_FSR4 "FSR 4.1.x on Metal assets (clang-format and spirv-val needed)" ON)
 find_program(BB_DEPS_CLANG_FORMAT clang-format)
 find_program(BB_DEPS_SPIRV_VAL spirv-val)
 if (BB_DEPS_FSR4 AND (NOT BB_DEPS_CLANG_FORMAT OR NOT BB_DEPS_SPIRV_VAL))
     message(WARNING "clang-format or spirv-val missing (brew install clang-format spirv-tools): "
-                    "FSR 4.1.1 on Metal is not built")
+                    "FSR 4.1.x on Metal is not built")
     set(BB_DEPS_FSR4 OFF)
 endif()
 

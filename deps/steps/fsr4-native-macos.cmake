@@ -1,6 +1,7 @@
-# The fsr4-native-macos tree (gpu/fsr4_metal/build_assets.py reads it): its third-party sources and
-# tools, with the commands they call pointed at the prefix's own and AMD's initializers left out
-# (they stay with the player: tools/fsr4_metal_initializers.sh).
+# The fsr4-native-macos v2.2 tree (gpu/fsr4_metal/build_assets.py reads it): its third-party
+# sources and tools (4.1's HLSL, the 4.1.2 imported-shader catalogue, the native generators), with
+# the commands they call pointed at the prefix's own and AMD's initializers left out (they stay
+# with the player: tools/fsr4_metal_initializers.sh).
 set(bb_tree "${BB_PREFIX}/share/fsr4-native-macos")
 file(REMOVE_RECURSE "${bb_tree}")
 file(MAKE_DIRECTORY "${bb_tree}/tools/bin")

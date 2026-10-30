@@ -38,6 +38,7 @@ The compatibility level imported from bbport is **0.51**, plus the 0.6 items bel
 | Online on shadPS4 0.20's network code (Seamless Hunt with BBSC co-op, The Hunter's Dream) | Done on macOS without BBSC (`49e2d2c`, `gpu/bbnet20`): taken from shadPS4 0.20 and droogie/bbhost directly. Seamless co-op is left out (it is built on the game's internals) |
 | FSR 4.1.1 changes | Not taken: on macOS FSR 4.1.1 runs in Metal (fsr4-native-macos) with the MoltenVK renderer only; the Metal renderer offers MetalFX only |
 | The new memory model, NVIDIA/Intel/VRAM fixes, Steam Deck, AppImage | Not applicable (unified memory, Apple GPUs, macOS) |
+| FSR 4.1.2 on macOS | Ported from fsr4-native-macos v2.2: FSR 4.1.2 Lite, 4.1 Lossy and 4.1 in Metal (`gpu/fsr4_metal/`, VENDOR.txt) |
 
 ### From 0.7
 

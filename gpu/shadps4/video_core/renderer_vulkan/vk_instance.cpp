@@ -1109,9 +1109,25 @@ bool Instance::IsFsr411Supported() const {
 #if !BB_FSR
     return false;
 #elif defined(__APPLE__)
-    return metal_objects && Fsr4MetalBackend::IsSupported(*this);
+    return metal_objects && Fsr4MetalBackend::IsSupported(*this, Fsr4MetalMode::Fsr411);
 #else
     return IsFsr4Int8Supported() && mixed_float_dot_product;
+#endif
+}
+
+bool Instance::IsFsr411LossySupported() const {
+#if !BB_FSR || !defined(__APPLE__)
+    return false;
+#else
+    return metal_objects && Fsr4MetalBackend::IsSupported(*this, Fsr4MetalMode::Fsr411Lossy);
+#endif
+}
+
+bool Instance::IsFsr412Supported() const {
+#if !BB_FSR || !defined(__APPLE__)
+    return false;
+#else
+    return metal_objects && Fsr4MetalBackend::IsSupported(*this, Fsr4MetalMode::Fsr412);
 #endif
 }
 

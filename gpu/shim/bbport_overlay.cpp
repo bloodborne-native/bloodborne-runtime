@@ -738,16 +738,25 @@ void GraphicsTab() {
         // The upscalers this GPU offers (FSR 4, DLSS and XeSS need other GPUs).
         std::vector<int> ids;
         std::vector<const char*> names;
-        const char* all[] = {T("upscaler.off"), "FSR 3.1", "FSR 4", "FSR 4.1.1", "TAA", "DLSS",
-                             LT("options.upscaler.metalfx")};
-        static_assert(sizeof(all) / sizeof(all[0]) == BbSettings::UpscalerCount);
-        for (int i = 0; i < BbSettings::UpscalerCount; ++i) {
-            const bool supported = i == BbSettings::UpscalerFsr4     ? s.fsr4_supported.load()
-                                   : i == BbSettings::UpscalerFsr411 ? s.fsr411_supported.load()
-                                   : i == BbSettings::UpscalerDlss   ? s.dlss_supported.load()
-                                   : i == BbSettings::UpscalerMetalFx ? s.metalfx_supported.load()
-                                   : i == BbSettings::UpscalerFsr3   ? s.fsr3_supported.load()
-                                                                     : true;
+        const char* all[BbSettings::UpscalerCount] = {
+            T("upscaler.off"), "FSR 3.1", "FSR 4", "FSR 4.1", "TAA", "DLSS",
+            LT("options.upscaler.metalfx"), "FSR 4.1 Lossy", "FSR 4.1.2 Lite"};
+        // The 4.1.x modes in the order the menu describes them: the new Lite model first, then
+        // the two 4.1 profiles; the other upscalers keep their place.
+        const int order[] = {BbSettings::UpscalerOff, BbSettings::UpscalerFsr3,
+                             BbSettings::UpscalerFsr4, BbSettings::UpscalerFsr412,
+                             BbSettings::UpscalerFsr411Lossy, BbSettings::UpscalerFsr411,
+                             BbSettings::UpscalerTaa, BbSettings::UpscalerDlss,
+                             BbSettings::UpscalerMetalFx};
+        for (int i : order) {
+            const bool supported = i == BbSettings::UpscalerFsr4          ? s.fsr4_supported.load()
+                                   : i == BbSettings::UpscalerFsr411      ? s.fsr411_supported.load()
+                                   : i == BbSettings::UpscalerFsr411Lossy ? s.fsr411_lossy_supported.load()
+                                   : i == BbSettings::UpscalerFsr412      ? s.fsr412_supported.load()
+                                   : i == BbSettings::UpscalerDlss        ? s.dlss_supported.load()
+                                   : i == BbSettings::UpscalerMetalFx     ? s.metalfx_supported.load()
+                                   : i == BbSettings::UpscalerFsr3        ? s.fsr3_supported.load()
+                                                                          : true;
 #ifndef __APPLE__
             if (i == BbSettings::UpscalerMetalFx) continue; // macOS only
 #endif
@@ -757,15 +766,17 @@ void GraphicsTab() {
             }
         }
         int chosen = int(std::find(ids.begin(), ids.end(), s.upscaler.load()) - ids.begin());
-        if (Choice(LT("graphics.upscaler"), names.data(), int(names.size()), &chosen,
-                   s.upscaler == BbSettings::UpscalerTaa    ? T("upscaler.taa")
-                   : s.upscaler == BbSettings::UpscalerDlss ? T("dlss.hint")
-                   : s.upscaler == BbSettings::UpscalerMetalFx
-                       ? LT("options.upscaler.metalfxHint")
-                   : BbSettings::IsFsr4(s.upscaler)
-                       ? T(s.upscaler == BbSettings::UpscalerFsr411 ? "fsr4.hint411" : "fsr4.hint")
-                       : LT("graphics.upscalingHint"),
-                   true)) {
+        if (chosen == int(ids.size())) chosen = 0; // a hidden mode: show the first entry
+        const char* hint = s.upscaler == BbSettings::UpscalerTaa    ? T("upscaler.taa")
+                           : s.upscaler == BbSettings::UpscalerDlss ? T("dlss.hint")
+                           : s.upscaler == BbSettings::UpscalerMetalFx
+                               ? LT("options.upscaler.metalfxHint")
+                           : s.upscaler == BbSettings::UpscalerFsr411 ? T("fsr4.hint411")
+                           : s.upscaler == BbSettings::UpscalerFsr411Lossy ? T("fsr4.hint411lossy")
+                           : s.upscaler == BbSettings::UpscalerFsr412 ? T("fsr4.hint412")
+                           : BbSettings::IsFsr4(s.upscaler) ? T("fsr4.hint")
+                                                            : LT("graphics.upscalingHint");
+        if (Choice(LT("graphics.upscaler"), names.data(), int(names.size()), &chosen, hint, true)) {
             Store(s.upscaler, ids[chosen], true);
         }
         if (const char* problem = s.dlss_problem.load(); problem && s.upscaler == BbSettings::UpscalerDlss) {
@@ -1289,7 +1300,7 @@ void FpsCounter() {
                bottom ? viewport->WorkPos.y + viewport->WorkSize.y - pad : viewport->WorkPos.y + pad),
         ImGuiCond_Always, ImVec2(column, bottom ? 1.0f : 0.0f));
     ImGui::SetNextWindowBgAlpha(big ? 0.78f : 0.6f);
-    const float panel = big ? ImGui::CalcTextSize("FSR 4.1.1  3840 x 2160 > 3840 x 2160").x + S(24)
+    const float panel = big ? ImGui::CalcTextSize("FSR 4.1.2 Lite  3840 x 2160 > 3840 x 2160").x + S(24)
                             : ImGui::CalcTextSize("000 FPS  000.0 ms").x + S(16);
     ImGui::SetNextWindowSizeConstraints(ImVec2(panel, 0.0f), ImVec2(panel, FLT_MAX));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, S(big ? Theme::Radius : 8.0f));
@@ -1330,13 +1341,15 @@ void FpsCounter() {
         ImGui::PopStyleVar(3);
         return;
     }
-    const char* upscaler = s.upscaler == BbSettings::UpscalerFsr3     ? "FSR 3.1"
-                           : s.upscaler == BbSettings::UpscalerFsr4   ? "FSR 4"
-                           : s.upscaler == BbSettings::UpscalerFsr411 ? "FSR 4.1.1"
-                           : s.upscaler == BbSettings::UpscalerTaa    ? "TAA"
-                           : s.upscaler == BbSettings::UpscalerDlss   ? "DLSS"
-                           : s.upscaler == BbSettings::UpscalerMetalFx ? "MetalFX"
-                                                                      : nullptr;
+    const char* upscaler = s.upscaler == BbSettings::UpscalerFsr3        ? "FSR 3.1"
+                           : s.upscaler == BbSettings::UpscalerFsr4      ? "FSR 4"
+                           : s.upscaler == BbSettings::UpscalerFsr411    ? "FSR 4.1"
+                           : s.upscaler == BbSettings::UpscalerFsr411Lossy ? "FSR 4.1 Lossy"
+                           : s.upscaler == BbSettings::UpscalerFsr412    ? "FSR 4.1.2 Lite"
+                           : s.upscaler == BbSettings::UpscalerTaa       ? "TAA"
+                           : s.upscaler == BbSettings::UpscalerDlss      ? "DLSS"
+                           : s.upscaler == BbSettings::UpscalerMetalFx   ? "MetalFX"
+                                                                         : nullptr;
     const auto output = BbSettings::CurrentOutput();
     // What runs it: the GPU path and the CPU path.
     ImGui::Text("%s  ·  %s", RendererName(), CpuName());

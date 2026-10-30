@@ -148,9 +148,10 @@ kept until the GPU has finished every submission that could use them.
 21:9, 32:9 or Auto, the monitor's) and a size from that ratio's list (`aspect_ratio`,
 `output_res`). The game renders at 1920×1080 internally by default. A preset can make the scene
 render smaller while the game's UI stays at output size. The upscaler is off by default. The
-Metal renderer offers MetalFX only, encoded on the frame's command buffer (a setting asking for
-FSR or DLSS gets MetalFX). The MoltenVK fallback offers FSR 3.1, FSR 4.1.1 and MetalFX (through
-a bridge to the host's Metal device). The other route, live resolution, keeps the game at
+Metal renderer offers MetalFX for FSR 3.1, FSR 4.0.2 and DLSS (a setting asking for one of them
+gets MetalFX), and the native FSR 4.1.x modes, encoded on the frame's command buffer. The
+MoltenVK fallback offers FSR 3.1, FSR 4.1.x (through VK_EXT_metal_objects) and MetalFX. The
+other route, live resolution, keeps the game at
 1920×1080 and scales the renderer's targets while it runs (`live_resolution` in the settings).
 
 **Character motion vectors** (`object_motion`, off by default on macOS): the game has no motion

@@ -297,14 +297,26 @@ if (APPLE AND BB_FSR)
     set_source_files_properties(shadps4/video_core/renderer_vulkan/vk_fsr4_metal.mm PROPERTIES
         COMPILE_FLAGS "-fobjc-arc")
 
-    # FSR 4.1.1 on Metal (vk_fsr4_metal.mm): its kernels and model layouts, built here into
-    # out/fsr4_metal (gpu/fsr4_metal/build_assets.py) from fsr4-native-macos, DXC and SPIRV-Cross
-    # in deps/ (scripts/macos/build-deps.sh). Without them FSR 4.1.1 reports itself unavailable.
+    # FSR 4.1.x on Metal (vk_fsr4_metal.mm): its kernels and model layouts, built here into
+    # out/fsr4_metal (gpu/fsr4_metal/build_assets.py) from fsr4-native-macos v2.2, DXC and
+    # SPIRV-Cross in deps/ (scripts/macos/build-deps.sh). FSR 4.1 (exact-fast) is built by
+    # default; FSR 4.1 Lossy (lossy2) needs its pinned GPL weights and FSR 4.1.2 Lite needs the
+    # model imported from the builder's own AMD DLL (tools/fsr412_import_model.py --with-shaders).
+    # Without them the missing modes report themselves unavailable.
     set(BB_FSR4_NATIVE_SRC "$ENV{BB_FSR4_NATIVE_SRC}" CACHE PATH "fsr4-native-macos tree")
     if (NOT BB_FSR4_NATIVE_SRC)
         set(BB_FSR4_NATIVE_SRC ${CMAKE_PREFIX_PATH}/share/fsr4-native-macos)
     endif()
-    set(BB_FSR4_METAL_OUT ${CMAKE_BINARY_DIR}/../fsr4_metal)
+    set(BB_FSR411_PROFILES "$ENV{BB_FSR411_PROFILES}" CACHE STRING
+        "FSR 4.1 profiles to build: exact-fast (default), lossy2 (comma list)")
+    if (NOT BB_FSR411_PROFILES)
+        set(BB_FSR411_PROFILES "exact-fast")
+    endif()
+    set(BB_FSR411_LOSSY2_WEIGHTS "$ENV{BB_FSR411_LOSSY2_WEIGHTS}" CACHE PATH
+        "weights_lossy2.npz for FSR 4.1 Lossy (default: fetch the pinned GPL file)")
+    set(BB_FSR412_MODEL "$ENV{BB_FSR412_MODEL}" CACHE PATH
+        "imported FSR 4.1.2 model (tools/fsr412_import_model.py --with-shaders)")
+    set(BB_FSR4_METAL_OUT ${CMAKE_SOURCE_DIR}/out/fsr4_metal)
     # The kernels need Apple's Metal compiler: Xcode with its Metal Toolchain component
     # (xcodebuild -downloadComponent MetalToolchain). The Command Line Tools have none, so with
     # xcode-select pointing at them, Xcode's own is tried.
@@ -322,7 +334,7 @@ if (APPLE AND BB_FSR)
     endif()
     if (NOT metal_result EQUAL 0)
         message(WARNING "No Metal compiler (Xcode and its Metal Toolchain: xcodebuild "
-                        "-downloadComponent MetalToolchain): FSR 4.1.1 on Metal is not built")
+                        "-downloadComponent MetalToolchain): FSR 4.1.x on Metal is not built")
     elseif (EXISTS ${BB_FSR4_NATIVE_SRC}/tools/compile_fsr411.py AND EXISTS ${BB_FSR4_NATIVE_SRC}/tools/bin/dxc)
         file(GLOB BB_FSR4_METAL_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal/*.metal
              ${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal/*.h ${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal/*.py)
@@ -330,17 +342,24 @@ if (APPLE AND BB_FSR)
         if (BB_METAL_DEVELOPER_DIR)
             set(metal_env DEVELOPER_DIR=${BB_METAL_DEVELOPER_DIR})
         endif()
+        set(bb_fsr4_args --src ${BB_FSR4_NATIVE_SRC} --out ${BB_FSR4_METAL_OUT}
+                        --profiles ${BB_FSR411_PROFILES})
+        if (BB_FSR412_MODEL)
+            list(APPEND bb_fsr4_args --fsr412-model ${BB_FSR412_MODEL})
+        endif()
+        if (BB_FSR411_LOSSY2_WEIGHTS)
+            list(APPEND bb_fsr4_args --lossy2-weights ${BB_FSR411_LOSSY2_WEIGHTS})
+        endif()
         add_custom_command(OUTPUT ${BB_FSR4_METAL_OUT}/.built
             COMMAND ${CMAKE_COMMAND} -E env ${metal_env} $<TARGET_FILE:Python3::Interpreter>
-                    ${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal/build_assets.py
-                    --src ${BB_FSR4_NATIVE_SRC} --out ${BB_FSR4_METAL_OUT}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal/build_assets.py ${bb_fsr4_args}
             COMMAND ${CMAKE_COMMAND} -E touch ${BB_FSR4_METAL_OUT}/.built
             DEPENDS ${BB_FSR4_METAL_SOURCES} VERBATIM)
         add_custom_target(fsr4_metal_assets DEPENDS ${BB_FSR4_METAL_OUT}/.built)
         add_dependencies(bbgpu fsr4_metal_assets)
     else()
         message(WARNING "fsr4-native-macos or DXC is not in deps (${BB_FSR4_NATIVE_SRC}): "
-                        "FSR 4.1.1 on Metal is not built (scripts/macos/build-deps.sh)")
+                        "FSR 4.1.x on Metal is not built (scripts/macos/build-deps.sh)")
     endif()
 endif()
 if (APPLE)
