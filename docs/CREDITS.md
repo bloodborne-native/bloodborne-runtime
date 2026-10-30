@@ -110,8 +110,11 @@ Changes taken from other ports of bbport, with thanks:
 - [FSR-Vulkan](https://github.com/FireBurn/FSR-Vulkan) by FireBurn and the AMD FidelityFX SDK (MIT).
   The macOS build applies a local CMake patch in `gpu/patches/fsr-vulkan-macos/` so this library
   uses Vulkan headers without linking the loader. The upstream submodule commit is unchanged.
-- [fsr4-native-macos](https://github.com/UzenUPoZiTiV4ik/fsr4-native-macos) by PoZiTiV4ik (UzenUPoZiTiV4ik) (MIT), FSR 4.1.1 in Metal for the
-  MoltenVK renderer
+- [fsr4-native-macos](https://github.com/UzenUPoZiTiV4ik/fsr4-native-macos) by PoZiTiV4ik
+  (UzenUPoZiTiV4ik) (MIT), FSR 4.1.x in Metal for the MoltenVK renderer (v2.2: FSR 4.1,
+  FSR 4.1 Lossy and FSR 4.1.2 INT8 Lite). Its FSR 4.1 Lossy mode uses the trained layers of
+  [zgauthier2000/fsr4-shader-performance-overrides](https://github.com/zgauthier2000/fsr4-shader-performance-overrides)
+  (GPL-2.0-or-later), fetched at build time and not committed.
 - [LibAtrac9](https://github.com/Thealexbarney/LibAtrac9) (MIT)
 - [Dear ImGui](https://github.com/ocornut/imgui) (MIT)
 - [SPIRV-Cross](https://github.com/KhronosGroup/SPIRV-Cross) (Apache-2.0), the Metal backend's shader conversion

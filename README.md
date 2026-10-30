@@ -7,7 +7,7 @@ provides the PS4 system libraries the game calls (threads, memory, files, saves,
 video out, network) and draws its graphics with a renderer derived from shadPS4. On Apple
 Silicon the renderer draws with **Metal directly** (the default; MetalFX is its upscaler); the
 older path through Vulkan and MoltenVK stays selectable (`BB_METAL_FRAME=0`, with FSR 3.1 and
-FSR 4.1.1). Other platforms use Vulkan. An optional online module (`BB_ONLINE=1`) plays on the
+FSR 4.1.x). Other platforms use Vulkan. An optional online module (`BB_ONLINE=1`) plays on the
 community servers: Seamless Hunt and The Hunter's Dream.
 
 It is **built on [bbport](https://github.com/deadinside28/bloodborne_pc) by deadinside28**, the

@@ -149,7 +149,7 @@ kept until the GPU has finished every submission that could use them.
 `output_res`). The game renders at 1920×1080 internally by default. A preset can make the scene
 render smaller while the game's UI stays at output size. The upscaler is off by default. The
 Metal renderer offers MetalFX only, encoded on the frame's command buffer (a setting asking for
-FSR or DLSS gets MetalFX). The MoltenVK fallback offers FSR 3.1, FSR 4.1.1 and MetalFX (through
+FSR or DLSS gets MetalFX). The MoltenVK fallback offers FSR 3.1, FSR 4.1.x and MetalFX (through
 a bridge to the host's Metal device). The other route, live resolution, keeps the game at
 1920×1080 and scales the renderer's targets while it runs (`live_resolution` in the settings).
 

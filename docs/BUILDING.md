@@ -12,11 +12,19 @@
   brew install bash pkgconf glslang nasm cmake ninja spirv-tools clang-format
   ```
 
-  FSR 4.1.1, offered only with the MoltenVK renderer (`BB_METAL_FRAME=0`; it runs in Metal
+  FSR 4.1.x, offered only with the MoltenVK renderer (`BB_METAL_FRAME=0`; it runs in Metal
   there), also needs Xcode with its Metal Toolchain (`xcodebuild -downloadComponent
   MetalToolchain`), even when `xcode-select` points at the Command Line Tools. Without it, or
-  without `spirv-tools` or `clang-format` (DXC needs it), the build skips FSR 4.1.1 with a
+  without `spirv-tools` or `clang-format` (DXC needs it), the build skips FSR 4.1.x with a
   warning, and the game reports it unavailable. The default Metal renderer does not use it.
+  There are three modes: **FSR 4.1** (`exact-fast`, built by default from the MIT HLSL; `BB_UPSCALER=fsr411`, the value that used to select the retired folded lossy profile),
+  **FSR 4.1 Lossy** (`lossy2`, built with `BB_FSR411_PROFILES=exact-fast,lossy2`; its six
+  trained layers are the pinned GPL-2.0-or-later `weights_lossy2.npz`, fetched at build time and
+  never committed), and **FSR 4.1.2 Lite** (`int8-lite`, built with
+  `BB_FSR412_MODEL=<imported model>`). Import that model once from AMD's own driver DLL:
+  `python3 <fsr4-native>/tools/fsr412_import_model.py --dll amdvkffx64.dll --with-shaders`.
+  Nothing of AMD's is committed: the player supplies the 4.1.1 pair (131,072 bytes each) and the
+  4.1.2 Lite pair (27,392 bytes each) at run time with `tools/fsr4_metal_initializers.sh`.
 
 - Your own dump of the game with update 1.09, prepared as in
   [Game files](https://github.com/bloodborne-native/bloodborne-mac/blob/main/docs/guide/game-files.md).
@@ -38,7 +46,7 @@ BB_GAME_DIR=/path/to/your/game bash run.sh
   `run.sh`, the launcher and the test scripts look (the game's own files live there too).
   `cmake --preset macos-arm64-asan` and then `--build`/`ctest --preset` is the same build with the
   address and undefined sanitizers, `BB_SANITIZE` passes them by hand.
-- `deps/` (MoltenVK, SDL3, FFmpeg, the online module's libraries, ...; for FSR 4.1.1 also DXC,
+- `deps/` (MoltenVK, SDL3, FFmpeg, the online module's libraries, ...; for FSR 4.1.x also DXC,
   the spirv-cross command and the fsr4-native-macos tree, without AMD's initializers) is built by
   `scripts/macos/build-deps.sh`, which runs `deps/CMakeLists.txt`. `deps/packages.cmake` has every
   version and the SHA256 of its archive; a package whose stamp is there is not touched, and
@@ -71,9 +79,10 @@ BB_GAME_DIR=/path/to/your/game bash run.sh
 |---|---|
 | `BB_GAME_DIR` | The game folder |
 | `BB_OUTPUT_RES=WxH`, `BB_RENDER_RES=WxH` | Output size, and the game's render size (with `BB_RENDER_RES`, also set `BB_DMEM_MB`) |
-| `BB_UPSCALER=off\|fsr3\|fsr4\|fsr411\|taa\|dlss\|metalfx`, `BB_UPSCALE_PRESET` | Upscaler (off by default; an unknown value is off) and preset. The Metal renderer turns `fsr3`, `fsr4`, `fsr411` and `dlss` into `metalfx`; an FSR 4 the GPU cannot run falls back to `fsr3`, an unavailable DLSS to FSR 3.1 or MetalFX |
-| `BB_FSR411_DIR` | AMD's FSR 4.1.1 files: the Vulkan path's set, or on macOS (MoltenVK) `initializers.bin` and `initializers-ultraperformance.bin` (`tools/fsr4_metal_initializers.sh <the player's amd_fidelityfx_upscaler_dx12.dll>`) |
-| `BB_FSR4_METAL_SYNC=1`, `BB_FSR4_METAL_DIR` | FSR 4.1.1 on macOS with CPU waits instead of shared events; its built files (default `out/fsr4_metal`) |
+| `BB_UPSCALER=off\|fsr3\|fsr4\|fsr411\|fsr411-lossy\|fsr412\|taa\|dlss\|metalfx`, `BB_UPSCALE_PRESET` | Upscaler (off by default; an unknown value is off) and preset. The Metal renderer turns the FSR and DLSS values into `metalfx`; an FSR 4 mode the GPU or the built assets cannot run falls back to `fsr3`, an unavailable DLSS to FSR 3.1 or MetalFX |
+| `BB_FSR411_DIR` | AMD's FSR 4.1.1 files (FSR 4.1 and 4.1 Lossy): the Vulkan path's set, or on macOS (MoltenVK) `initializers.bin` and `initializers-ultraperformance.bin` (`tools/fsr4_metal_initializers.sh <the player's amd_fidelityfx_upscaler_dx12.dll>`) |
+| `BB_FSR412_DIR` | AMD's FSR 4.1.2 Lite files: `initializers-lite.bin` and `initializers-lite-ultraperformance.bin`, 27,392 bytes each (`tools/fsr4_metal_initializers.sh <amdvkffx64.dll or amdxcffx64.dll>`) |
+| `BB_FSR4_METAL_SYNC=1`, `BB_FSR4_METAL_DIR` | FSR 4.1.x on macOS with CPU waits instead of shared events; its built files (default `out/fsr4_metal`) |
 | `BB_FPS=uncap\|90\|60\|30`, `BB_FPS_LIMIT` | Frame-rate mode and limit |
 | `BB_METAL_FRAME=1`, `=0` | The Metal renderer (default on Apple Silicon) or the MoltenVK fallback; Rosetta and `BB_VK_DRIVER` always take MoltenVK/Vulkan |
 | `BB_METAL_NATIVE_BOOT=1`, `=0` | Set by `run.sh` (and the launcher) with `BB_METAL_FRAME`: with `1` the window and device start without the Vulkan loader or MoltenVK |
