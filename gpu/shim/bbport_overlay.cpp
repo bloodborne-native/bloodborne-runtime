@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "bbport_game_hooks.h"
 #include "bbport_overlay.h"
+#include "bbport_touch_controls.h"
 
 #include <algorithm>
 #include <array>
@@ -2099,7 +2100,7 @@ bool Visible() {
     if (!initialized) return false;
     std::scoped_lock lock{banner_mutex};
     return menu_open || prompt_active || BbSettings::Get().show_fps || trophy_queue.Pending() ||
-           TestTitle() || !banner_text.empty();
+           TestTitle() || !banner_text.empty() || BbTouch::Shown();
 }
 
 
@@ -2257,6 +2258,10 @@ bool CapturesInput() {
     return menu_open || prompt_active;
 }
 
+void OpenMenu() {
+    SetOpen(true);
+}
+
 namespace {
 /// Every frame: the present interval for the FPS readout (measured also while nothing is drawn),
 /// scripted keys and the live effects. Whether anything is drawn.
@@ -2305,9 +2310,97 @@ void SetupFrame(float ms, std::chrono::steady_clock::time_point now, u32 width, 
     }
 }
 
+/// The touch controls (bbport_touch_controls.cpp) in the menu's colours: translucent cards with
+/// cream outlines and labels, the launcher's red while held. Under the menu and the notices.
+void TouchControls() {
+    const ImVec2 size = ImGui::GetIO().DisplaySize;
+    ImDrawList* draw = ImGui::GetBackgroundDrawList();
+    const float line = std::max(1.5f, size.y * 0.0028f);
+    const ImU32 rest = ImGui::GetColorU32(ImVec4(Theme::Card.x, Theme::Card.y, Theme::Card.z, 0.42f));
+    const ImU32 held = ImGui::GetColorU32(ImVec4(Theme::Primary.x, Theme::Primary.y, Theme::Primary.z, 0.85f));
+    const ImU32 edge = ImGui::GetColorU32(ImVec4(Theme::Foreground.x, Theme::Foreground.y, Theme::Foreground.z, 0.32f));
+    const ImU32 ink = ImGui::GetColorU32(ImVec4(Theme::Foreground.x, Theme::Foreground.y, Theme::Foreground.z, 0.78f));
+    const ImU32 ink_held = ImGui::GetColorU32(Theme::PrimaryForeground);
+    const ImU32 gold = ImGui::GetColorU32(ImVec4(Theme::Gold.x, Theme::Gold.y, Theme::Gold.z, 0.85f));
+    const auto label = [&](const char* text, ImVec2 centre, float height, ImU32 colour) {
+        const float font = std::max(10.0f, height * 0.9f);
+        const ImVec2 extent = ImGui::GetFont()->CalcTextSizeA(font, FLT_MAX, 0.0f, text);
+        draw->AddText(ImGui::GetFont(), font, ImVec2(centre.x - extent.x / 2, centre.y - extent.y / 2), colour, text);
+    };
+    for (const BbTouch::View& v : BbTouch::Views(size.x, size.y)) {
+        const ImVec2 c(v.x, v.y);
+        const ImU32 fill = v.pressed ? held : rest, text = v.pressed ? ink_held : ink;
+        switch (v.kind) {
+        case BbTouch::View::Pill: {
+            const ImVec2 a(c.x - v.w, c.y - v.h), b(c.x + v.w, c.y + v.h);
+            draw->AddRectFilled(a, b, fill, v.h);
+            draw->AddRect(a, b, std::strcmp(v.label, "Settings") ? edge : gold, v.h, 0, line);
+            label(v.label, c, v.h * 0.95f, text);
+            break;
+        }
+        case BbTouch::View::Button:
+            draw->AddCircleFilled(c, v.w, fill);
+            draw->AddCircle(c, v.w, edge, 0, line);
+            label(v.label, c, v.w * 0.8f, text);
+            break;
+        case BbTouch::View::Face: {
+            draw->AddCircleFilled(c, v.w, fill);
+            draw->AddCircle(c, v.w, edge, 0, line);
+            const float r = v.w * 0.42f, t = line * 1.4f;
+            switch (v.symbol) {
+            case 0: // triangle
+                draw->AddTriangle(ImVec2(c.x, c.y - r), ImVec2(c.x + r * 0.95f, c.y + r * 0.7f),
+                                  ImVec2(c.x - r * 0.95f, c.y + r * 0.7f), text, t);
+                break;
+            case 1: // circle
+                draw->AddCircle(c, r * 0.9f, text, 0, t);
+                break;
+            case 2: // cross
+                draw->AddLine(ImVec2(c.x - r * 0.8f, c.y - r * 0.8f), ImVec2(c.x + r * 0.8f, c.y + r * 0.8f), text, t);
+                draw->AddLine(ImVec2(c.x - r * 0.8f, c.y + r * 0.8f), ImVec2(c.x + r * 0.8f, c.y - r * 0.8f), text, t);
+                break;
+            default: // square
+                draw->AddRect(ImVec2(c.x - r * 0.75f, c.y - r * 0.75f), ImVec2(c.x + r * 0.75f, c.y + r * 0.75f), text, 0.0f, 0, t);
+                break;
+            }
+            break;
+        }
+        case BbTouch::View::Dpad: {
+            // Four arms around the centre; a held direction in the launcher's red.
+            const float arm = v.w * 0.36f, reach = v.w;
+            const struct { int bit; float dx, dy; } arms[] = {{0x10, 0, -1}, {0x20, 1, 0}, {0x40, 0, 1}, {0x80, -1, 0}};
+            for (const auto& a : arms) {
+                const ImVec2 mid(c.x + a.dx * reach * 0.55f, c.y + a.dy * reach * 0.55f);
+                const float hw = a.dx != 0 ? reach * 0.45f : arm, hh = a.dy != 0 ? reach * 0.45f : arm;
+                const ImVec2 p0(mid.x - hw, mid.y - hh), p1(mid.x + hw, mid.y + hh);
+                const bool on = (v.symbol & a.bit) != 0;
+                draw->AddRectFilled(p0, p1, on ? held : rest, arm * 0.35f);
+                draw->AddRect(p0, p1, edge, arm * 0.35f, 0, line);
+                const float s = arm * 0.45f; // the arrow
+                const ImVec2 tip(mid.x + a.dx * s * 1.2f, mid.y + a.dy * s * 1.2f);
+                draw->AddTriangleFilled(tip, ImVec2(mid.x - a.dy * s - a.dx * s * 0.4f, mid.y + a.dx * s - a.dy * s * 0.4f),
+                                        ImVec2(mid.x + a.dy * s - a.dx * s * 0.4f, mid.y - a.dx * s - a.dy * s * 0.4f),
+                                        on ? ink_held : ink);
+            }
+            break;
+        }
+        case BbTouch::View::Stick:
+            draw->AddCircleFilled(c, v.w, ImGui::GetColorU32(ImVec4(Theme::Card.x, Theme::Card.y, Theme::Card.z, 0.28f)));
+            draw->AddCircle(c, v.w, edge, 0, line);
+            draw->AddCircleFilled(ImVec2(v.knob_x, v.knob_y), v.w * 0.45f,
+                                  v.pressed ? held : ImGui::GetColorU32(ImVec4(Theme::Accent.x, Theme::Accent.y, Theme::Accent.z, 0.75f)));
+            draw->AddCircle(ImVec2(v.knob_x, v.knob_y), v.w * 0.45f, edge, 0, line);
+            break;
+        }
+    }
+}
+
 /// Under imgui_mutex, after the backend's new frame: the menu, FPS counter, prompt and notices.
 void BuildUi(std::chrono::steady_clock::time_point now) {
     ImGui::NewFrame();
+    if (!menu_open && BbTouch::Shown()) {
+        TouchControls();
+    }
     if (menu_open) {
         Menu();
     }

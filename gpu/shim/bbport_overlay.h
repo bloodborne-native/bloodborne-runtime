@@ -55,6 +55,8 @@ const char* ThermalName(int state);
 
 /// The menu or the text dialog is open: the game's input is held neutral.
 bool CapturesInput();
+/// Opens the settings menu (the touch controls' Settings button).
+void OpenMenu();
 
 /// The settings menu is open: the window shows the system cursor over it.
 bool MenuOpen();

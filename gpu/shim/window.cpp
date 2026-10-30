@@ -17,6 +17,7 @@
 #include "sdl_window.h"
 #include "bbport_cursor.h"
 #include "bbport_frame_rate.h"
+#include "bbport_touch_controls.h"
 #include "bbport_overlay.h"
 #include "bbport_settings.h"
 
@@ -365,6 +366,11 @@ bool WindowSDL::PollEvents() {
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
         if (FilteredByModule(&event, window)) {
+            continue;
+        }
+        // The touch controls (bbport_touch_controls.cpp): fingers on them, and the mouse events SDL
+        // makes from touches while they are shown (a tap does not take the mouse).
+        if (BbTouch::HandleEvent(event)) {
             continue;
         }
         if (event.type == SDL_EVENT_MOUSE_MOTION) {

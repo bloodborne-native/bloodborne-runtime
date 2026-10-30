@@ -63,6 +63,9 @@ int bbgpu_pointer_wanted(void);
 typedef void (*BbGpuPadFilter)(uint32_t *buttons, const uint8_t *sticks);
 void bbgpu_add_pad_filter(BbGpuPadFilter filter);
 void bbgpu_filter_pad(uint32_t *buttons, const uint8_t *sticks);
+/* The touch controls (gpu/shim/bbport_touch_controls.cpp): their buttons (ORed into the pad's)
+ * and sticks (-1: not held). 1 while the controls are shown. */
+int bbgpu_touch_pad(uint32_t *buttons, int *sticks);
 /* The shown frame's width / height (the display buffer's; the window letterboxes it). */
 float bbgpu_frame_aspect(void);
 /* Native mouse look: turns the game's camera (radians, applied at its next update); 0 when the

@@ -1226,6 +1226,18 @@ static void sample(PadData *d) {
     for (int i=0;i<4;++i) if (injected.stick[i]>=0) *axes[i]=(uint8_t)injected.stick[i];
     if (injected.mouse[0]!=0 || injected.mouse[1]!=0)
         apply_mouse_look(d,injected.mouse[0],injected.mouse[1],d->timestamp,1);
+    /* The touch controls (gpu/shim/bbport_touch_controls.cpp): their buttons and sticks. */
+    {
+        uint32_t touch_buttons=0;
+        int touch_sticks[4];
+        if (bbgpu_touch_pad(&touch_buttons,touch_sticks)) {
+            d->buttons|=touch_buttons;
+            if ((touch_buttons & BTN_TOUCHPAD) && !d->touch_count) touch_click(d,1);
+            if (touch_buttons & BTN_L2) d->l2=255;
+            if (touch_buttons & BTN_R2) d->r2=255;
+            for (int i=0;i<4;++i) if (touch_sticks[i]>=0) *axes[i]=(uint8_t)touch_sticks[i];
+        }
+    }
     /* Game modules (a menu pointer's presses). */
     const uint8_t sticks[4]={d->left_x,d->left_y,d->right_x,d->right_y};
     bbgpu_filter_pad(&d->buttons,sticks);

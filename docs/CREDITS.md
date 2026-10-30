@@ -98,7 +98,11 @@ Changes taken from other ports of bbport, with thanks:
 - [**ducvd89/Bloodborne-Android**](https://github.com/ducvd89/Bloodborne-Android/commit/bf1e6cf)
   (GPL-2.0, `bf1e6cf`): carried that walker to bbport 0.51 with shader-cache serialization and
   host-architecture separation; also supplied delayed condition-variable retirement and
-  pitch-sized NV12 frame invalidation. Only these runtime changes were taken.
+  pitch-sized NV12 frame invalidation. Only these runtime changes were taken. The touch controls
+  (`gpu/shim/bbport_touch_controls.cpp`) follow the design of its on-screen controller
+  (`TouchControllerOverlay.java`): translucent controls, and a touch outside every control turns
+  the camera as a right stick anchored where the finger landed; the code, layout and styling are
+  this project's.
 - [**maze1377**](https://github.com/maze1377)'s port of our texture-collector fix to
   [**SpartanPort**](https://github.com/FelipePrado0/SpartanPort/pull/1124) (GPL-2.0, PR #1124,
   `8f463a1`): GpuDirty images are not among the GPU-written images the collector keeps, their
