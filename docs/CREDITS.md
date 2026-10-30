@@ -99,6 +99,11 @@ Changes taken from other ports of bbport, with thanks:
   (GPL-2.0, `bf1e6cf`): carried that walker to bbport 0.51 with shader-cache serialization and
   host-architecture separation; also supplied delayed condition-variable retirement and
   pitch-sized NV12 frame invalidation. Only these runtime changes were taken.
+- [**maze1377**](https://github.com/maze1377)'s port of our texture-collector fix to
+  [**SpartanPort**](https://github.com/FelipePrado0/SpartanPort/pull/1124) (GPL-2.0, PR #1124,
+  `8f463a1`): GPU-written images kept below the critical memory mark are compared with that mark
+  rather than the aggressive pass's flag, which the first pass never sets, and GpuDirty images are
+  not kept (`TextureCache::GarbageCollectImages`).
 
 ## Libraries
 
