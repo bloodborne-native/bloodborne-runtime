@@ -1,20 +1,27 @@
 # iOS proof of concept
 
-On `main` since 2026-10-29 (merged from the `ios-poc` branches of this repository and
-bloodborne-recomp; the iOS code behind `TARGET_OS_IPHONE`). Bloodborne running on an iPhone 17 Pro
-Max: the runtime, bbcpu and the recompiled library, the Metal renderer, signed with a free Apple
-ID. A proof of concept, not a release: nothing here is packaged or distributed; the app is the
-private bloodborne-ios repository. How the work is meant to be split between this repository and a future app
-repository: bloodborne-mac's `docs/ARCHITECTURE.md` ("Where code lives").
+On `main` since 2026-10-29 (the iOS code behind `TARGET_OS_IPHONE`). Bloodborne running on an
+iPhone 17 Pro Max: the runtime, bbcpu and the recompiled library, the Metal renderer, signed with
+a free Apple ID. A proof of concept, not a release and not the focus of development: nothing is
+packaged or distributed. The app is the public
+[bloodborne-ios](https://github.com/bloodborne-native/bloodborne-ios) repository, whose
+[`docs/FINDINGS.md`](https://github.com/bloodborne-native/bloodborne-ios/blob/main/docs/FINDINGS.md)
+covers what the iPhone allows an app and the app's side of the work. How code is split between
+this repository and the apps: bloodborne-mac's `docs/ARCHITECTURE.md` ("Where code lives").
 
 ## Where it stands
 
-- The game boots, loads the copied Mac save and plays, with the FPS overlay and touch through
-  SDL's mouse emulation.
-- The phone prepares the game's executable itself (2026-10-30): the runtime reads
-  `Documents/game`'s `eboot.bin` and links its system modules in memory, as on the Mac, so
-  `boot-linked.bin` and `content.bin` no longer come from the Mac (`BB_IOS_PREPARE=0` still boots
-  them). `patches.bin` still does, until the patches are prepared by the runtime too.
+- **One app:** the launcher's iOS app runs the game in its own process. Its Play destroys the
+  launcher's window and starts the game, which reads the launcher's settings as on the Mac.
+- **Prepared on the phone:** the runtime reads `Documents/game`'s `eboot.bin`, links its system
+  modules in memory and builds the game's patches from `patches/Bloodborne.xml` at start
+  (`src/runtime_prepare.c`, `src/runtime_patches.c`), as on the Mac: nothing comes from a Mac but
+  the recompiled library. The game-only test app can still boot files the Mac prepared
+  (`BB_IOS_PREPARE=0`, `Documents/patches.bin`).
+- **The screen:** the render and output sizes follow the screen's own shape (Auto in the aspect
+  ratio list adds it at the usual heights); the app keeps them at 540 lines or fewer.
+- **Touch:** on-screen controls drawn by the overlay ([Architecture](ARCHITECTURE.md), touch
+  controls), hidden while a controller is connected.
 - Gameplay in the Hunter's Dream at 960×540, all effects on (about 1,420 draws a frame):
 
 | Build | FPS |
@@ -84,6 +91,26 @@ repository: bloodborne-mac's `docs/ARCHITECTURE.md` ("Where code lives").
 - **The system keyboard runs out of address space:** SDL's text input is not started on iOS (the
   app closed when the character name entry opened it).
 
+## The address space
+
+Everything but the game's memory (the app, WebKit in the launcher's app, the recompiled library,
+`malloc`, Metal's driver memory) shares about 2 GiB below the system's shared cache at
+`0x180000000`, and it runs out before the 3.29 GiB memory limit does: the game stops when a large
+allocation finds no gap, at start or later when the system draws over it (2,044 MiB used, the
+largest gap 2 MiB). The use by memory tag and what the app does about WebKit: bloodborne-ios's
+findings. What the runtime does:
+
+- **No Metal binary archive** (`BB_METAL_ARCHIVE=0`, set by the app): a loaded archive takes
+  13–37 times its size in address space.
+- **A 32 MiB stream buffer** on iOS for the renderer's small uploads (16 KiB and under).
+- **One allocation per file read, one growth while linking:** reading a file and linking the
+  executable no longer reallocate step by step, which left the region in pieces.
+- **Textures only the GPU holds are never evicted** for memory, on every platform: evicting them
+  drew textures dark; a lower frame rate is preferred to wrong pictures.
+
+Next, if the iPhone work resumes: a texture budget that keeps room for the system without those
+evictions, then the runtime's largest tables.
+
 ## Findings that apply beyond the iPhone
 
 - **The game's spin-then-sleep mutex** (lock `0x20368c0`, unlock `0x2036a40`; the game's heap and
@@ -112,19 +139,23 @@ repository: bloodborne-mac's `docs/ARCHITECTURE.md` ("Where code lives").
 
 ## Next steps
 
-1. Less CPU work for the same frames, since heat is what limits the frame rate now: the
+The iPhone is not the focus of development (bloodborne-mac's roadmap): it gains from the Mac's
+work on the shared runtime. When it resumes:
+
+1. The address space (above): the game should survive the system drawing over it.
+2. Less CPU work for the same frames, since heat is what limits the frame rate now: the
    interpreter still had 13% of the samples (Havok's workers spend 45% of their time in it), so
    find what it runs (the PS4's own libraries, functions left out) and recompile it.
-2. The generator's CPU work (the app's `docs/ROADMAP.md`, section 8), which helps the Mac too.
-3. Other spinning waits, found the way the mutex was.
-4. QoS per thread (only the main and render threads), if a profile shows them on slow cores.
+3. The recompiler's CPU work (the app's `docs/ROADMAP.md`), which helps the Mac too.
+4. Other spinning waits, found the way the mutex was.
+5. QoS per thread (only the main and render threads), if a profile shows them on slow cores.
 
 ## Build and run
 
 The app (its shell, build, signing and test scripts) is
-[bloodborne-ios](https://github.com/bloodborne-native/bloodborne-ios) (private), with this
-repository as its `runtime/` submodule. What stays here are the iOS builds of the runtime's own
-parts:
+[bloodborne-ios](https://github.com/bloodborne-native/bloodborne-ios), with this repository as
+its `runtime/` submodule; its README has the steps from a clone to playing. What stays here are
+the iOS builds of the runtime's own parts:
 
 ```sh
 bash scripts/ios/build-deps.sh                       # deps/ios-arm64 from deps/build/src

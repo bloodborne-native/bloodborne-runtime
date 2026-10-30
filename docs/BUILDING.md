@@ -76,6 +76,7 @@ BB_GAME_DIR=/path/to/your/game bash run.sh
 | `BB_FSR4_METAL_SYNC=1`, `BB_FSR4_METAL_DIR` | FSR 4.1.1 on macOS with CPU waits instead of shared events; its built files (default `out/fsr4_metal`) |
 | `BB_FPS=uncap\|90\|60\|30`, `BB_FPS_LIMIT` | Frame-rate mode and limit |
 | `BB_METAL_FRAME=1`, `=0` | The Metal renderer (default on Apple Silicon) or the MoltenVK fallback; Rosetta and `BB_VK_DRIVER` always take MoltenVK/Vulkan |
+| `BB_METAL_ARCHIVE=0` | No Metal binary archive: pipelines compiled when first used and not kept between runs (the iPhone app's setting: a loaded archive takes 13–37 times its size in address space) |
 | `BB_METAL_NATIVE_BOOT=1`, `=0` | Set by `run.sh` (and the launcher) with `BB_METAL_FRAME`: with `1` the window and device start without the Vulkan loader or MoltenVK |
 | `BB_LAZY_TEXTURE_USAGE=0` | Every texture made with the ShaderWrite and PixelFormatView usages, as before lossless texture compression (default on: they are added once, with a copy, when a view needs one; MojahedAbushawish's lazy usages from bloodborne_mac_port) |
 | `BB_GFX_BACKEND=metal`, `=vulkan` | The render adapter backend, set by `run.sh` with the renderer |
@@ -86,6 +87,8 @@ BB_GAME_DIR=/path/to/your/game bash run.sh
 | `BB_LANGUAGE`, `BB_UI_LANGUAGE` | The game's language (PS4 code), the menu's (`en`, `pt-BR`, ...) |
 | `BB_MODS_DIR`, `BB_MODS_ENABLED=0` | Mods folder, or no mods |
 | `BB_PATCHES_DIR` | Third-party patches folder |
+| `BB_PATCHES_XML` | The game's patch list the runtime builds its patches from at start (default `patches/Bloodborne.xml`) |
+| `BB_PROBE_PROGRAM` | The program `run.sh` asks for the scaled render and output sizes (`bb-probe --print-scaled SETTINGS`) when `BB_PROBE` wraps it in another command; default `out/bb-probe` |
 | `BB_FRAME_STATS=1` | Frame statistics in the log |
 | `BB_WAIT_STATS=1` | With the frame statistics, where the game's threads wait (mutexes, condition variables, semaphores, sleeps) by call site; off by default (it costs the waiting threads 3–10%); also on with `BB_WAIT_LOG=FILE` |
 | `BB_THREAD_QOS=0` | The GPU command processor and the recorders at the default QoS class, as before (default: user-interactive, so Apple platforms keep them on the performance cores) |
