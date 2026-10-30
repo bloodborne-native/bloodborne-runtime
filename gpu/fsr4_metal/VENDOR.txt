@@ -1,16 +1,21 @@
 Vendored from https://github.com/UzenUPoZiTiV4ik/fsr4-native-macos commit
-329d1d7367b6b948a53486505198a5d254f02809 (MIT License, below), from its src/:
+87fe2167b500f0fe854f8024c23bf3edea38a595 (v2.2, MIT License, below), from its src/:
 fsr411_helpers.metal, fsr411_simd.metal, fsr411_mpp.metal, fsr411_model.h, fsr411_runtime.h,
-fsr411_scratch_layout.h, fsr4_device.h, fsr4_input.h, fsr4_log.h. Unchanged except
-fsr411_runtime.h, whose local changes are marked "bbport:": it loads only what build_assets.py
-built (no compiling or Python while the game runs), takes AMD's initializers from the player's
-folders after checking their SHA-256, and assembles the native weights from the build's recipe
-(fold_conv3x3 ported from its tools/fsr411/lossy.py, winograd from tools/gen_fsr411_native.py).
-Its Lossy 2 profile is not used: its trained weights are a separate GPL download.
+fsr411_scratch_layout.h, fsr412_runtime.h, fsr412_session.inc, fsr4_device.h, fsr4_input.h,
+fsr4_log.h. Unchanged except fsr411_runtime.h and fsr412_session.inc, whose local changes are
+marked "bbport:": they load only what build_assets.py built (no compiling or Python while the
+game runs), take AMD's initializers from the player's folders after checking their SHA-256, and
+assemble the native weights from the build's recipes (fold_conv3x3 ported from its
+tools/fsr411/lossy.py, winograd from tools/gen_fsr411_native.py and tools/fsr412/native_model.py).
 
-build_assets.py (ours) runs that commit's tools/compile_fsr411.py and tools/gen_fsr411_native.py
-at build time, from the tree scripts/macos/build-deps.sh puts in deps/share/fsr4-native-macos
-(without its prebuilt binaries or AMD's initializers).
+build_assets.py (ours) runs that commit's tools/compile_fsr411.py, tools/gen_fsr411_native.py,
+tools/fsr412/compile_fsr412.py and tools/fsr412/native_model.py at build time, from the tree
+scripts/macos/build-deps.sh puts in deps/share/fsr4-native-macos (without its prebuilt binaries
+or AMD's initializers). FSR 4.1.2's shaders are built only from a model the builder imported from
+their own AMD DLL with tools/fsr412_import_model.py --with-shaders; FSR 4.1 Lossy's six trained
+layers come from its pinned GPL-2.0-or-later weights file, fetched at build time and never
+committed. Nothing of AMD's is committed or shipped: the player supplies the 4.1.1 and 4.1.2
+initializers at run time (tools/fsr4_metal_initializers.sh).
 
 MIT License
 

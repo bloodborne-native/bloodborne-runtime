@@ -35,10 +35,11 @@ bb_dep(spirv-cross-cli vulkan-sdk-1.4.363.0
     -DSPIRV_CROSS_SHARED=OFF -DSPIRV_CROSS_STATIC=ON -DSPIRV_CROSS_CLI=ON
     -DSPIRV_CROSS_ENABLE_TESTS=OFF)
 
-# FSR 4.1.1 on Metal: DXC compiles its kernels, and the fsr4-native-macos tree carries them.
+# FSR 4.1.x on Metal: DXC compiles the 4.1 kernels, and the fsr4-native-macos tree carries
+# them and the 4.1.2 asset tools.
 bb_git(dxc v1.9.2607 https://github.com/microsoft/DirectXShaderCompiler.git)
-bb_pin(fsr4-native-macos 329d1d7367b6b948a53486505198a5d254f02809
-    5dea8bf999821708c11fb814502551c6c0acf73d407fcfb63642828566b3ca50
+bb_pin(fsr4-native-macos 87fe2167b500f0fe854f8024c23bf3edea38a595
+    d8e501f07e962a809277421bac598b7faaf097d56240f5c53f33c1574b559689
     https://github.com/UzenUPoZiTiV4ik/fsr4-native-macos/archive/@VERSION@.tar.gz)
 
 # The GPU library's dependencies.
