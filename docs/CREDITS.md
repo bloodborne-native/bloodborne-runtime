@@ -101,9 +101,9 @@ Changes taken from other ports of bbport, with thanks:
   pitch-sized NV12 frame invalidation. Only these runtime changes were taken.
 - [**maze1377**](https://github.com/maze1377)'s port of our texture-collector fix to
   [**SpartanPort**](https://github.com/FelipePrado0/SpartanPort/pull/1124) (GPL-2.0, PR #1124,
-  `8f463a1`): GPU-written images kept below the critical memory mark are compared with that mark
-  rather than the aggressive pass's flag, which the first pass never sets, and GpuDirty images are
-  not kept (`TextureCache::GarbageCollectImages`).
+  `8f463a1`): GpuDirty images are not among the GPU-written images the collector keeps, their
+  data being in the buffer cache (`TextureCache::GarbageCollectImages`); the port also found that
+  our release of those images over the critical mark mostly did not happen.
 
 ## Libraries
 
