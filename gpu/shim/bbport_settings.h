@@ -171,7 +171,8 @@ const char* MenuText(const char* english, const char* russian);
 /// Reads the file, then the environment overrides. Called once at start.
 void Load();
 /// Checks the loaded choice before the first frame; unsupported FSR 4 uses FSR 3.1, MetalFX off.
-/// `metalfx_only` (the Metal renderer, decision 5): no FSR or DLSS; a choice of one is MetalFX.
+/// `metalfx_only` (the Metal renderer, decision 5): FSR 3.1, FSR 4.0.2 and DLSS run as MetalFX;
+/// the native FSR 4.1.x modes stay available.
 void ConfigureUpscalerSupport(bool fsr4, bool fsr411, bool fsr411_lossy, bool fsr412,
                               bool metalfx = false, bool metalfx_only = false);
 /// After device creation: DLSS availability; a DLSS setting falls back to FSR 3.1 without it.

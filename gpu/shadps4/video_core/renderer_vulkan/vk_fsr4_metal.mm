@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// bbport: FSR 4.1.x on Metal (macOS), from fsr4-native-macos v2.2 (gpu/fsr4_metal/VENDOR.txt). The
-// scene's color, depth and motion images are MoltenVK's own MTLTextures (VK_EXT_metal_objects),
-// read and written in place on its MTLDevice, in a command queue of this upscaler's own.
+// bbport: FSR 4.1.x on Metal (macOS), from fsr4-native-macos v2.2 (gpu/fsr4_metal/VENDOR.txt).
+// On the native Metal renderer (MetalLayer::FrameEnabled) it encodes on the frame's own
+// MTLCommandBuffer, with the layer's direct MTLTexture accessors. On MoltenVK, the scene's color,
+// depth and motion images are MoltenVK's own MTLTextures (VK_EXT_metal_objects), read and written
+// in place on its MTLDevice, in a command queue of this upscaler's own.
 //
-// Ordering (Events, the default): the frame so far is submitted and FSR waits for it on the GPU
-// through the scheduler's timeline exported as an MTLSharedEvent; FSR then signals a timeline of
-// its own, and the next submission waits for it before a full barrier, which orders everything
-// after it in submission order. No CPU waits. Without shared events (or BB_FSR4_METAL_SYNC=1) the
-// GPU thread finishes the frame so far and waits for FSR. Callers fetch CommandBuffer() again.
+// Ordering (MoltenVK, Events by default): the frame so far is submitted and FSR waits for it on
+// the GPU through the scheduler's timeline exported as an MTLSharedEvent; FSR then signals a
+// timeline of its own, and the next submission waits for it before a full barrier, which orders
+// everything after it in submission order. No CPU waits. Without shared events (or
+// BB_FSR4_METAL_SYNC=1) the GPU thread finishes the frame so far and waits for FSR. Callers fetch
+// CommandBuffer() again. The native Metal path needs none of this: it records in frame order.
 //
 // The kernels and the models' layouts are built with the runtime (gpu/fsr4_metal/build_assets.py:
 // metallibs, bindings, native manifests); AMD's initializers stay with the player
@@ -28,6 +31,7 @@
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "fsr4_metal/fsr411_runtime.h"
+#include "video_core/renderer_metal/mtl_vk_layer.h"
 
 namespace Vulkan {
 
@@ -134,12 +138,25 @@ public:
                        std::string(last_.error.localizedDescription.UTF8String ?: "unknown error");
             return false;
         }
-        id<MTLTexture> color = ExportTexture(vk_device_, export_objects_, frame.color.image);
-        id<MTLTexture> depth = ExportTexture(vk_device_, export_objects_, frame.depth.image);
-        id<MTLTexture> motion = ExportTexture(vk_device_, export_objects_, frame.motion.image);
-        id<MTLTexture> output = ExportTexture(vk_device_, export_objects_, frame.output.image);
+        id<MTLTexture> color = nil, depth = nil, motion = nil, output = nil;
+        if (native_) {
+            const auto texture = [](vk::Image image) {
+                return (__bridge id<MTLTexture>)MetalLayer::MetalImageTexture(
+                    reinterpret_cast<void*>(static_cast<VkImage>(image)));
+            };
+            color = texture(frame.color.image);
+            depth = texture(frame.depth.image);
+            motion = texture(frame.motion.image);
+            output = texture(frame.output.image);
+        } else {
+            color = ExportTexture(vk_device_, export_objects_, frame.color.image);
+            depth = ExportTexture(vk_device_, export_objects_, frame.depth.image);
+            motion = ExportTexture(vk_device_, export_objects_, frame.motion.image);
+            output = ExportTexture(vk_device_, export_objects_, frame.output.image);
+        }
         if (!color || !depth || !motion || !output) {
-            problem_ = "MoltenVK did not export the images' MTLTextures (VK_EXT_metal_objects)";
+            problem_ = native_ ? "the Metal frame did not expose the images' MTLTextures"
+                               : "MoltenVK did not export the images' MTLTextures (VK_EXT_metal_objects)";
             return false;
         }
 
@@ -184,6 +201,27 @@ public:
         options.ultraPerformance = frame.preset >= 4;
         options.rcas = frame.sharpen && frame.sharpness > 0.0f;
         options.sharpness = options.rcas ? frame.sharpness : 0.0f;
+
+        if (native_) {
+            id<MTLCommandBuffer> cmd = (__bridge id<MTLCommandBuffer>)MetalLayer::MetalCommandBuffer(
+                static_cast<void*>(static_cast<VkCommandBuffer>(frame.cmdbuf)));
+            if (!cmd) {
+                problem_ = "the Metal frame has no command buffer";
+                return false;
+            }
+            std::string error;
+            if (!runtime_->encode(cmd, *view_, mtl, options, error)) {
+                problem_ = std::string("Metal ") + ModeName(mode_) + ": " + error;
+                return false;
+            }
+            if (const std::string label = view_->backendLabel; label != described_) {
+                described_ = label;
+                std::printf("Upscaler: %s on Metal, %s, %ux%u -> %ux%u (frame command buffer)\n",
+                            ModeName(mode_), label.c_str(), in.rw, in.rh, in.uw, in.uh);
+            }
+            problem_.clear();
+            return true;
+        }
 
         // The writes of the passes before FSR, and the output's earlier readers, before the
         // submission that FSR waits for.
@@ -279,6 +317,22 @@ private:
     }
 
     void InitMetal() {
+        // On the native Metal renderer the layer exposes the frame's MTLTextures and the frame's
+        // command buffer directly; encode FSR there (MetalFX uses the same accessors).
+        if (MetalLayer::FrameEnabled()) {
+            native_ = true;
+            device_ = (__bridge id<MTLDevice>)MetalLayer::MtlDevice();
+            if (!device_) {
+                problem_ = "the Metal renderer has no MTLDevice";
+                return;
+            }
+            std::vector<std::string> initializers = InitializerDirs();
+            for (const auto& dir : InitializerDirs412()) initializers.push_back(dir);
+            runtime_ = std::make_unique<fsr411::Runtime>(device_, AssetDir(), std::move(initializers));
+            view_ = std::make_unique<fsr411::View>();
+            valid_ = true;
+            return;
+        }
         if (!instance_.IsMetalObjectsSupported()) {
             problem_ = "the Vulkan driver lacks VK_EXT_metal_objects (MoltenVK has it)";
             return;
@@ -369,6 +423,7 @@ private:
     id<MTLSharedEvent> work_event_{nil}; ///< the scheduler's timeline
     u64 done_value_{0};
     Fsr4MetalMode mode_;
+    bool native_{false};
     std::unique_ptr<fsr411::Runtime> runtime_;
     std::unique_ptr<fsr411::View> view_;
     bool valid_{false};
@@ -382,10 +437,12 @@ private:
 namespace {
 std::string SupportProblem(const Instance& instance, Fsr4MetalMode mode) {
     std::string reason;
-    if (!instance.IsMetalObjectsSupported()) {
+    if (!instance.IsMetalObjectsSupported() && !MetalLayer::FrameEnabled()) {
         reason = "the Vulkan driver lacks VK_EXT_metal_objects (MoltenVK has it)";
     } else {
-        id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+        id<MTLDevice> device = MetalLayer::FrameEnabled()
+                                    ? (__bridge id<MTLDevice>)MetalLayer::MtlDevice()
+                                    : MTLCreateSystemDefaultDevice();
         if (!device || ![device supportsFamily:MTLGPUFamilyApple7]) {
             reason = "needs an Apple M1 or newer GPU";
         } else {

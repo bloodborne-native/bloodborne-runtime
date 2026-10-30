@@ -12,9 +12,10 @@
   brew install bash pkgconf glslang nasm cmake ninja spirv-tools clang-format
   ```
 
-  FSR 4.1.x, offered only with the MoltenVK renderer (`BB_METAL_FRAME=0`; it runs in Metal
-  there), also needs Xcode with its Metal Toolchain (`xcodebuild -downloadComponent
-  MetalToolchain`), even when `xcode-select` points at the Command Line Tools. Without it, or
+  FSR 4.1.x runs on both renderers (the Metal renderer encodes it on the frame's command buffer;
+  the MoltenVK fallback through `VK_EXT_metal_objects`). It also needs Xcode with its Metal
+  Toolchain (`xcodebuild -downloadComponent MetalToolchain`), even when `xcode-select` points at
+  the Command Line Tools. Without it, or
   without `spirv-tools` or `clang-format` (DXC needs it), the build skips FSR 4.1.x with a
   warning, and the game reports it unavailable. The default Metal renderer does not use it.
   There are three modes: **FSR 4.1** (`exact-fast`, built by default from the MIT HLSL; `BB_UPSCALER=fsr411`, the value that used to select the retired folded lossy profile),

@@ -193,11 +193,12 @@ Taken by the maintainer. The numbers are cited in code comments; they do not cha
 3. **One backend per process.** Chosen at start-up; no mixed-backend frame.
 4. **MoltenVK stays as a fallback** on macOS, selectable with `BB_METAL_FRAME=0`, until M4 is
    accepted. (This replaced the plan to remove it with M4.)
-5. **Upscalers by backend.** The Metal backend offers MetalFX only: a setting asking for FSR 3.1,
-   FSR 4, FSR 4.1.x or DLSS runs MetalFX (`ConfigureUpscalerSupport`'s `metalfx_only`). FSR 3.1,
-   FSR 4 and DLSS belong to the Vulkan backend; on macOS FSR 3.1 and FSR 4.1.x are offered only
-   with the MoltenVK fallback (`vk_fsr4_metal` runs FSR 4.1.x in Metal but reaches its images
-   through MoltenVK). The upscaler is off by default. (This replaced porting FSR 3.1 to Metal.)
+5. **Upscalers by backend.** The Metal backend offers MetalFX for FSR 3.1, FSR 4.0.2 and DLSS
+   (`ConfigureUpscalerSupport`'s `metalfx_only`), and the native FSR 4.1.x modes themselves:
+   `vk_fsr4_metal` encodes them on the frame's own command buffer, reaching the frame's
+   MTLTextures through the Metal layer's direct accessors. The MoltenVK fallback also offers
+   FSR 4.1.x, through `VK_EXT_metal_objects`. FSR 3.1 and DLSS otherwise belong to the Vulkan
+   backend. The upscaler is off by default.
 6. **How Vulkan leaves the Metal path.** The Metal backend answers the Vulkan entry points the
    shared renderer calls, so neither the Vulkan loader nor MoltenVK is linked or loaded on the
    native path, while Vulkan's headers stay the shared code's vocabulary (Vulkan is the backend
