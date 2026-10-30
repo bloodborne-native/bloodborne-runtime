@@ -74,7 +74,7 @@ constexpr OutputSize UnpackSize(std::uint32_t v) {
 }
 /// An aspect ratio's outputs, smallest first.
 struct OutputList {
-    std::array<OutputSize, 12> sizes{};
+    std::array<OutputSize, 20> sizes{};
     int count = 0;
     const OutputSize* begin() const { return sizes.data(); }
     const OutputSize* end() const { return sizes.data() + count; }

@@ -174,16 +174,31 @@ OutputList Outputs(int aspect) {
     for (int i = 0; i < g.count; ++i) list.sizes[list.count++] = g.sizes[i];
     // Auto: the monitor's own size too (another ratio than its group's sizes, 1366x768, ...).
     const OutputSize m = Monitor();
-    if (aspect == AspectAuto && m.width >= 640 && m.height >= 360 && m.width <= 7680 &&
-        m.height <= 4320 && list.IndexOf(m) < 0 && list.count < int(list.sizes.size())) {
+    const auto insert = [&list](OutputSize size) {
+        if (size.width < 640 || size.height < 360 || size.width > 7680 || size.height > 4320 ||
+            list.IndexOf(size) >= 0 || list.count >= int(list.sizes.size())) {
+            return;
+        }
         int at = 0;
-        while (at < list.count && (list.sizes[at].height < m.height ||
-                                   (list.sizes[at].height == m.height && list.sizes[at].width < m.width))) {
+        while (at < list.count && (list.sizes[at].height < size.height ||
+                                   (list.sizes[at].height == size.height && list.sizes[at].width < size.width))) {
             ++at;
         }
         for (int i = list.count; i > at; --i) list.sizes[i] = list.sizes[i - 1];
-        list.sizes[at] = m;
+        list.sizes[at] = size;
         ++list.count;
+    };
+    if (aspect == AspectAuto && m.width > 0 && m.height > 0) {
+        insert(m);
+        // A screen of a ratio no group has (a phone: 2868x1320 is 2.17:1): its ratio at the usual
+        // heights up to its own, so a smaller output fills it too (even widths: the game has
+        // half-resolution buffers).
+        const double ratio = double(m.width) / m.height;
+        if (std::abs(std::log(ratio / g.ratio)) > 0.01) {
+            for (const int height : {540, 720, 1080, 1440, 2160}) {
+                if (height < m.height) insert({int(std::lround(height * ratio / 2.0)) * 2, height});
+            }
+        }
     }
     return list;
 }
@@ -209,6 +224,8 @@ std::string SizeText(OutputSize size) {
 }
 
 void SetMonitor(int width, int height) {
+    // The game is landscape: a screen reported upright (a phone's) is its landscape size.
+    if (height > width) std::swap(width, height);
     const OutputSize m{width, height};
     if (width <= 0 || height <= 0 || m == Monitor()) return;
     monitor.store(PackSize(m), std::memory_order_relaxed);
