@@ -218,6 +218,13 @@ PsoCache::PsoCache(Device& device_, std::filesystem::path cache_dir)
         LOG_WARNING(Render, "Metal binary archive off under MTL_SHADER_VALIDATION");
         return;
     }
+    // BB_METAL_ARCHIVE=0: no binary archive, pipelines are compiled when first used. Metal holds a
+    // loaded archive in memory at many times its file's size (a 14 MB archive: 187 MiB held,
+    // 551 MiB while loading), address space the game in the iPhone launcher does not have.
+    if (const char* env = std::getenv("BB_METAL_ARCHIVE"); env && env[0] == '0') {
+        std::printf("Metal binary archive: off (BB_METAL_ARCHIVE=0), pipelines compiled when first used\n");
+        return;
+    }
 
     @autoreleasepool {
         std::error_code ec;

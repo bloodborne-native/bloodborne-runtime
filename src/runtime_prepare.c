@@ -799,6 +799,28 @@ int bb_boot_link(const char *game_dir, BbBoot *boot, char *error, size_t error_s
     uint64_t base = (boot->size + 65535) & ~(uint64_t)65535;
     if (patch_fs_loads(boot, &main.elf, 0, &fs_patched)) { fail(error, error_size, "eboot.bin: fs loads"); goto done; }
     uint64_t tls_module = 2;
+    /* The image grows once, to its linked size: grown module by module, each realloc held the old
+     * and the new image (about 90 MB each) at once, room the iPhone launcher does not have. */
+    uint64_t image_capacity = 0;
+    {
+        uint64_t end = base, next = base;
+        for (size_t f = 0; f < sizeof(MODULES) / sizeof(*MODULES); ++f) {
+            snprintf(path, sizeof(path), "%s/sce_module/%s", game_dir, MODULES[f]);
+            if (read_module(path, &m, error, error_size)) goto done;
+            uint64_t modsize = 0;
+            for (int i = 0; i < m.elf.count; ++i)
+                if ((m.elf.ph[i].type == PT_LOAD || m.elf.ph[i].type == PT_SCE_RELRO) &&
+                    m.elf.ph[i].vaddr + m.elf.ph[i].memsz > modsize)
+                    modsize = m.elf.ph[i].vaddr + m.elf.ph[i].memsz;
+            module_free(&m);
+            end = next + modsize;
+            next = (next + modsize + 65535) & ~(uint64_t)65535;
+        }
+        if (end > MAX_IMAGE) { fail(error, error_size, "linked image exceeds probe limit"); goto done; }
+        uint8_t *grown = realloc(boot->image, end);
+        if (!grown) goto oom;
+        boot->image = grown, image_capacity = end;
+    }
     for (size_t f = 0; f < sizeof(MODULES) / sizeof(*MODULES); ++f) {
         const char *file = MODULES[f];
         snprintf(path, sizeof(path), "%s/sce_module/%s", game_dir, file);
@@ -811,11 +833,10 @@ int bb_boot_link(const char *game_dir, BbBoot *boot, char *error, size_t error_s
                 loads[load_count++] = &m.elf.ph[i];
                 if (m.elf.ph[i].vaddr + m.elf.ph[i].memsz > modsize) modsize = m.elf.ph[i].vaddr + m.elf.ph[i].memsz;
             }
-        if (base + modsize > MAX_IMAGE) { fail(error, error_size, "linked image exceeds probe limit"); goto done; }
-        uint8_t *grown = realloc(boot->image, base + modsize);
+        if (base + modsize > image_capacity) { fail(error, error_size, "%s: the linked image's size changed", file); goto done; }
         BbBootLoad *more = realloc(boot->loads, (boot->load_count + (size_t)load_count) * sizeof(*more));
-        if (!grown || !more) { fail(error, error_size, "out of memory"); goto done; }
-        boot->image = grown, boot->loads = more;
+        if (!more) { fail(error, error_size, "out of memory"); goto done; }
+        boot->loads = more;
         memset(boot->image + boot->size, 0, base + modsize - boot->size);
         boot->size = base + modsize;
         const Bytes e = {m.elf.elf, m.elf.elf_size};
