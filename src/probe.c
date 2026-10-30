@@ -549,7 +549,6 @@ int main(int argc, char **argv) {
     alarm(timeout_seconds); /* 0 disables the watchdog */
 #endif
     FILE *f = NULL;
-    char *boot_memory = NULL;
     if (from_game) {
         BbBoot boot;
         char error[512];
@@ -559,11 +558,13 @@ int main(int argc, char **argv) {
         }
         printf("Prepared: image %llu bytes, %zu modules linked, %zu imports, %zu native bindings\n",
                (unsigned long long)boot.size, boot.module_count, boot.name_count, boot.binding_count);
-        size_t length = 0;
-        FILE *stream = open_memstream(&boot_memory, &length);
-        if (!stream || bb_boot_write_stream(&boot, stream) || fclose(stream)) fail("cannot prepare the game in memory");
+        /* An unnamed temporary file, not a growing memory stream: a stream reallocates and copies
+         * as it grows (about 94 MB), and inside a launcher app the address space had no block that
+         * large left (ENOMEM on the iPhone). */
+        f = tmpfile();
+        if (!f || bb_boot_write_stream(&boot, f) || fflush(f) || fseek(f, 0, SEEK_SET))
+            fail("cannot prepare the game in memory");
         bb_boot_free(&boot);
-        f = fmemopen(boot_memory, length, "rb");
     } else {
         f = fopen(argv[1], "rb");
     }
@@ -673,7 +674,6 @@ int main(int argc, char **argv) {
     runtime_native_load(bb_image_base);
     if (fread(image, 1, size, f) != size || fgetc(f) != EOF) fail("incorrect memory image size");
     fclose(f);
-    free(boot_memory);
     runtime_game_lock_load(bb_image_base);
     if (!cpu_only) {
         char title[128]="Bloodborne", serial[16]="UNKNOWN", sfo[4096];
