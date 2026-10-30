@@ -169,6 +169,7 @@ void RegisterModule(vk::ShaderModule module, std::span<const u32> spirv) {
     auto metal = std::make_shared<Metal::ShaderModule>(
         std::vector<u32>(spirv.begin(), spirv.end()), hash);
     known.push_back(metal);
+    s.factory.Prefetch(metal);
     s.modules[handle] = std::move(metal);
 }
 

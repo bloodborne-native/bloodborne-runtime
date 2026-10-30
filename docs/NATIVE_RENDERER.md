@@ -245,7 +245,7 @@ the test save, translator, no faults):
 | N2.2 · the inventory | 100% `████████████████████` | The shaders use the user data only to locate their resources (below) |
 | N2.3 · mesh draws from the draw state | 100% `████████████████████` | Done, opt-in (`BB_RENDER_BOUNDARY=flat`): mesh draws' flattened user data from the draw state on the workers and the GPU thread, without the walker; exact; the observer still costs 42 CPU points ([below](#n23s-design-the-flat-buffer-from-the-draw-state)) |
 | N2.4 · the other draw kinds | 80% `████████████████░░░░` | The draw methods' other draws: done. Compute passes and the draws outside the methods: most read their sharps straight from the user-data registers, which needs no boundary ([below](#n24-the-other-draw-kinds-and-compute-passes)). Left: method draws whose program has no plan (6% of draw stages), the draws (2%) and surface operations (16% of dispatch stages) that walk tables |
-| N2.5 · ahead of time | 10% `██░░░░░░░░░░░░░░░░░░` | Designed and measured ([below](#n25-shaders-ahead-of-time)): a true first play, with Metal's own system cache empty too, spends 8.4 s compiling MSL into libraries and 4.9 s building pipelines; the worst frame takes 4.9 s. Next: a launcher step that compiles libraries; pipelines need keys the shaders do not hold |
+| N2.5 · ahead of time | 40% `████████░░░░░░░░░░░░` | Designed and measured ([below](#n25-shaders-ahead-of-time)): a true first play, with Metal's own system cache empty too, spends 8.4 s compiling MSL into libraries and 4.9 s building pipelines; the worst frame takes 4.9 s. Shaders compiling on worker threads and translated ahead of the GPU thread (opt-in) bring the stalls from 12 s to 7 s and the worst frame to 2.0 s. Next: a long session with `BB_SHADER_AHEAD=1` before it becomes the default, then the pipelines' 4.9 s, which need keys the shaders do not hold |
 
 ### The inventory (N2.2)
 
@@ -398,6 +398,32 @@ vertex formats, the render targets' formats, blending, write masks and sample co
 is in the shader bundles: the engine chooses it at draw time. So libraries can be built from the
 game's files, while pipelines need keys that only a play session has recorded (`WarmUp` replays
 those a player has seen).
+
+**Compiling ahead of the GPU thread.** On Metal, `dynamic_vertex_input` is never set, so the
+background pipeline path (`BB_ASYNC_PIPELINES`) does not run: every library and pipeline of a first
+play is built one at a time on the GPU thread. Metal's compiler itself scales: 743 of the game's
+shaders took 17.1 s on 1 thread, 4.6 s on 4 and 2.8 s on 8, and a source it has compiled takes no
+time, in any process. The size optimization level saves nothing. So what a first play lacks is
+lookahead, which the draw-preparation workers have:
+
+- **Shader threads** (`PipelineFactory::Prefetch`, `BB_SHADER_PREFETCH=0` turns them off): a new
+  module's library starts compiling at once on half the cores (2 to 6), and the pipeline build waits
+  for what is unfinished. Alone it overlaps only a pipeline's own stages: stalls 12.9 s to 12.0 s.
+- **Translating ahead** (`PipelineCache::TranslateAhead`, opt-in with `BB_SHADER_AHEAD=1`): a worker
+  that meets a shader the GPU thread has not made yet has it translated on one helper thread, with
+  the draw's own registers, so the SPIR-V is what the GPU thread will produce and `RegisterModule`
+  gives it the same module. Nothing the GPU thread reads changes and no draw is skipped.
+
+Two alternating pairs from empty caches (M3 Pro, Iosefka's Clinic):
+
+| | Time in frames over 100 ms | Worst frame | Libraries |
+|---|---:|---:|---:|
+| Shader threads | 11.9–12.3 s | 4.3–4.4 s | 362 |
+| With translating ahead | 7.0–7.2 s | 2.0–2.1 s | 385 (273 translations) |
+
+The frame rate in play does not change (48.6–48.8 FPS). Translating ahead stays opt-in until a long
+session has passed: the translator's asserts are fatal, and it now reads a pending draw's code ahead
+of the GPU thread. The pipelines' 4.9 s is what is left of a first play's stalls.
 
 **What tells variants apart:** of the 61 later variants, 37 differ only in their binding numbers,
 20 in images or buffers (an image's type or sRGB, a buffer's format), 5 in runtime settings and

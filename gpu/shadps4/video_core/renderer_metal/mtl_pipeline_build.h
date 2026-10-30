@@ -94,6 +94,11 @@ public:
         return psos;
     }
 
+    /// Starts compiling a new module's plain form on the shader threads, so a pipeline's stages
+    /// compile side by side. BuildGraphics and BuildCompute wait for what is unfinished, or
+    /// compile it themselves if no thread has reached it. BB_SHADER_PREFETCH=0: off.
+    void Prefetch(std::shared_ptr<const ShaderModule> module);
+
     /// The pipelines of a draw with `key`. `modules` by Shader::SwStage (null: the stage is not
     /// used). `attributes` in the fetch shader's order (the order of key.vertex_buffer_formats).
     /// `clip_emulation_fragment`: the pipeline has no fragment shader but needs the clip-distance
@@ -123,6 +128,8 @@ private:
     ShaderCompiler compiler;
     PsoCache psos;
     std::unique_ptr<Geometry::PassThroughCache> pass_through;
+    struct ShaderThreads;
+    std::unique_ptr<ShaderThreads> shader_threads; ///< last: joined before the rest goes
 };
 
 } // namespace Metal

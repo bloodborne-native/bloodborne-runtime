@@ -9,6 +9,7 @@
 #include <deque>
 #include <functional>
 #include <mutex>
+#include <pthread.h>
 #include <ranges>
 #include <string>
 #include <thread>
@@ -1356,6 +1357,90 @@ size_t PipelineCache::NewPermutationIndex(u64 program_hash, size_t in_memory, bo
     return index;
 }
 
+namespace {
+/// BB_SHADER_AHEAD: one thread for the workers' translations, with a stack for the translator
+/// (workers have the system's small default), running one at a time for the caller.
+class AheadThread {
+public:
+    AheadThread() {
+        pthread_attr_t attr;
+        pthread_attr_init(&attr);
+        pthread_attr_setstacksize(&attr, 16 * 1024 * 1024);
+        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+        pthread_t thread;
+        pthread_create(&thread, &attr, [](void* self) -> void* {
+            static_cast<AheadThread*>(self)->Loop();
+            return nullptr;
+        }, this);
+        pthread_attr_destroy(&attr);
+    }
+    void Run(const std::function<void()>& job) {
+        std::scoped_lock one_caller{caller};
+        std::unique_lock lk{mutex};
+        current = &job;
+        cv.notify_all();
+        cv.wait(lk, [this] { return current == nullptr; });
+    }
+
+private:
+    void Loop() {
+        std::unique_lock lk{mutex};
+        for (;;) {
+            cv.wait(lk, [this] { return current != nullptr; });
+            lk.unlock();
+            (*current)();
+            lk.lock();
+            current = nullptr;
+            cv.notify_all();
+        }
+    }
+    std::mutex caller, mutex;
+    std::condition_variable cv;
+    const std::function<void()>* current = nullptr;
+};
+} // namespace
+
+void PipelineCache::TranslateAhead(HwStage hw_stage, SwStage sw_stage,
+                                   const Shader::ShaderParams& params,
+                                   Shader::RuntimeInfo runtime_info,
+                                   Shader::Backend::Bindings& binding) {
+    static const bool on = [] {
+        const char* env = std::getenv("BB_SHADER_AHEAD");
+        return env && env[0] == '1' && Shader::UsePortableSrtWalker();
+    }();
+    if (!on) {
+        return;
+    }
+    static AheadThread thread;
+    thread.Run([&] {
+        const u64 seen_key = HashCombine(
+            HashCombine(params.hash, XXH3_64bits(&runtime_info, sizeof(runtime_info))),
+            XXH3_64bits(&binding, sizeof(binding)));
+        if (const auto it = ahead_seen.find(seen_key); it != ahead_seen.end()) {
+            binding = it->second;
+            return;
+        }
+        // The code is the pending draw's, valid until it has run; what the translation reads
+        // through pointers may not be, as for the worker's own walk (GetProgram).
+        sigjmp_buf recover;
+        if (sigsetjmp(recover, 0)) {
+            return;
+        }
+        runtime_fault_recover = &recover;
+        Shader::Info info{hw_stage, sw_stage, params};
+        auto next = binding;
+        const auto ir = Shader::TranslateProgram(params.code, ahead_pools, info, runtime_info, profile);
+        auto spv = Shader::Backend::SPIRV::EmitSPIRV(profile, runtime_info, ir, next);
+        runtime_fault_recover = nullptr;
+        ahead_seen.emplace(seen_key, next);
+        binding = next;
+        ReleaseShader(MakeShader(spv, GetShaderName(hw_stage, params.hash, 0)));
+        if (ShaderLogOn()) {
+            std::printf("Shader ahead: %zu translated\n", ahead_seen.size());
+        }
+    });
+}
+
 PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage hw_stage,
                                                 SwStage sw_stage,
                                                 const Shader::ShaderParams& params,
@@ -1368,6 +1453,8 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
         const auto found_program = program_cache.find(params.hash);
         if (found_program == program_cache.end() || !found_program->second->info_template) {
             worker.failed = true;
+            lk.unlock();
+            TranslateAhead(hw_stage, sw_stage, params, runtime_info, binding);
             return {};
         }
         const Program* program = found_program->second.get();
@@ -1397,6 +1484,8 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
         const auto it = std::ranges::find(program->modules, spec, &Program::Module::spec);
         if (it == program->modules.end()) {
             worker.failed = true;
+            lk.unlock();
+            TranslateAhead(hw_stage, sw_stage, params, runtime_info, binding);
             return {};
         }
         info.AddBindings(binding);

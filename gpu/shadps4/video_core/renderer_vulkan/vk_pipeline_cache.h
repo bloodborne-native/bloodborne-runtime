@@ -216,6 +216,15 @@ private:
     tsl::robin_map<u64, size_t> cached_permutations;
     size_t NewPermutationIndex(u64 program_hash, size_t in_memory, bool cached);
 
+    /// bbport BB_SHADER_AHEAD=1: a worker met a shader the GPU thread has not made yet. Translates
+    /// it on the ahead thread and makes it, so its library compiles before the GPU thread needs
+    /// it; the GPU thread finds the same SPIR-V's module. `binding` moves on past this stage.
+    void TranslateAhead(Shader::HwStage hw_stage, Shader::SwStage sw_stage,
+                        const Shader::ShaderParams& params, Shader::RuntimeInfo runtime_info,
+                        Shader::Backend::Bindings& binding);
+    Shader::Pools ahead_pools;
+    tsl::robin_map<u64, Shader::Backend::Bindings> ahead_seen; ///< on the ahead thread
+
 public:
     /// A game shader made through the render adapter (docs/RENDER_ADAPTER.md, A5); fatal when
     /// the driver rejects it.

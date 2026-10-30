@@ -8,6 +8,12 @@
 
 #include <fmt/format.h>
 
+#include <algorithm>
+#include <condition_variable>
+#include <cstdlib>
+#include <deque>
+#include <thread>
+
 #include "common/logging/log.h"
 #include "shader_recompiler/runtime_info.h"
 #include "video_core/renderer_metal/mtl_geometry.h"
@@ -33,11 +39,72 @@ ShaderModule::ShaderModule(std::vector<u32> spirv_, u64 hash_)
 
 ShaderModule::~ShaderModule() = default;
 
+/// The threads compiling new modules ahead of their pipelines (Prefetch).
+struct PipelineFactory::ShaderThreads {
+    explicit ShaderThreads(PipelineFactory& factory) {
+        const u32 count = std::clamp(std::thread::hardware_concurrency() / 2, 2u, 6u);
+        for (u32 i = 0; i < count; ++i) {
+            workers.emplace_back([this, &factory] { Run(factory); });
+        }
+    }
+    ~ShaderThreads() {
+        {
+            std::scoped_lock lock{mutex};
+            stop = true;
+        }
+        cv.notify_all();
+        for (auto& worker : workers) {
+            worker.join();
+        }
+    }
+    void Submit(std::shared_ptr<const ShaderModule> module) {
+        {
+            std::scoped_lock lock{mutex};
+            modules.push_back(std::move(module));
+        }
+        cv.notify_one();
+    }
+    void Run(PipelineFactory& factory) {
+        for (;;) {
+            std::shared_ptr<const ShaderModule> module;
+            {
+                std::unique_lock lock{mutex};
+                cv.wait(lock, [this] { return stop || !modules.empty(); });
+                if (stop) {
+                    return;
+                }
+                module = std::move(modules.front());
+                modules.pop_front();
+            }
+            @autoreleasepool {
+                factory.Plain(*module, "prefetch");
+            }
+        }
+    }
+
+    std::mutex mutex;
+    std::condition_variable cv;
+    std::deque<std::shared_ptr<const ShaderModule>> modules;
+    std::vector<std::thread> workers;
+    bool stop = false;
+};
+
 PipelineFactory::PipelineFactory(Device& device, std::filesystem::path cache_dir)
     : compiler{device, std::move(cache_dir)}, psos{device, compiler.CacheDir()},
-      pass_through{std::make_unique<Geometry::PassThroughCache>(device)} {}
+      pass_through{std::make_unique<Geometry::PassThroughCache>(device)} {
+    const char* env = std::getenv("BB_SHADER_PREFETCH");
+    if (!(env && env[0] == '0')) {
+        shader_threads = std::make_unique<ShaderThreads>(*this);
+    }
+}
 
 PipelineFactory::~PipelineFactory() = default;
+
+void PipelineFactory::Prefetch(std::shared_ptr<const ShaderModule> module) {
+    if (shader_threads) {
+        shader_threads->Submit(std::move(module));
+    }
+}
 
 const CompiledShader* PipelineFactory::Plain(const ShaderModule& module, const char* what) {
     std::call_once(module.plain_once, [&] {

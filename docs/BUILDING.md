@@ -77,6 +77,7 @@ BB_GAME_DIR=/path/to/your/game bash run.sh
 | `BB_FPS=uncap\|90\|60\|30`, `BB_FPS_LIMIT` | Frame-rate mode and limit |
 | `BB_METAL_FRAME=1`, `=0` | The Metal renderer (default on Apple Silicon) or the MoltenVK fallback; Rosetta and `BB_VK_DRIVER` always take MoltenVK/Vulkan |
 | `BB_METAL_ARCHIVE=0` | No Metal binary archive: pipelines compiled when first used and not kept between runs (the iPhone app's setting: a loaded archive takes 13–37 times its size in address space) |
+| `BB_SHADER_PREFETCH=0`, `BB_SHADER_AHEAD=1` | New shaders' Metal libraries compiled at first use instead of on the shader threads; shaders translated ahead of the GPU thread for the draw-preparation workers, opt-in (first-play stalls 12 s to 7 s; [Native renderer](NATIVE_RENDERER.md#n25-shaders-ahead-of-time)) |
 | `BB_METAL_NATIVE_BOOT=1`, `=0` | Set by `run.sh` (and the launcher) with `BB_METAL_FRAME`: with `1` the window and device start without the Vulkan loader or MoltenVK |
 | `BB_LAZY_TEXTURE_USAGE=0` | Every texture made with the ShaderWrite and PixelFormatView usages, as before lossless texture compression (default on: they are added once, with a copy, when a view needs one; MojahedAbushawish's lazy usages from bloodborne_mac_port) |
 | `BB_GFX_BACKEND=metal`, `=vulkan` | The render adapter backend, set by `run.sh` with the renderer |
