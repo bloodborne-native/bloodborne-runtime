@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // The render adapter's Metal resources (M1); see mtl_resources.h.
 
+#include <TargetConditionals.h>
+#if TARGET_OS_IPHONE
+#include <os/proc.h>
+#endif
 #include "video_core/renderer_metal/mtl_resources.h"
 
 #import <Metal/Metal.h>
@@ -72,7 +76,13 @@ Buffer NewBuffer(u64 size, Storage storage) {
         break;
     }
     id<MTLBuffer> buffer = [mtl_device newBufferWithLength:size options:options];
+#if TARGET_OS_IPHONE
+    // On iOS the app's memory limit is the usual cause: say how much of it was left.
+    ASSERT_MSG(buffer, "Metal could not make a buffer of {} bytes ({} MiB left under the app's memory limit)",
+               size, os_proc_available_memory() >> 20);
+#else
     ASSERT_MSG(buffer, "Metal could not make a buffer of {} bytes", size);
+#endif
     return {(__bridge_retained void*)buffer,
             storage == Storage::Private ? nullptr : buffer.contents};
 }

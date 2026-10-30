@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 /* The executable's image this port runs (scripts/game_check.py's SUPPORTED_IMAGE). */
 static const char SUPPORTED_IMAGE[] = "071df19c8880086d97182dbc057bc8cb37badaca57d9112683836b24a0444c0a";
@@ -89,6 +90,15 @@ static int read_file(const char *path, Bytes *out) {
     if (!f) return -1;
     uint8_t *data = NULL;
     size_t size = 0, capacity = 0;
+    /* A regular file in one allocation of its size: grown by doubling, the 90 MB executable
+     * needed a 128 MB block while still holding the 64 MB one, and inside the launcher's iOS app
+     * the address space had no such block left. */
+    struct stat info;
+    if (!fstat(fileno(f), &info) && S_ISREG(info.st_mode) && info.st_size > 0) {
+        capacity = (size_t)info.st_size + 1; /* +1: the read that finds the end */
+        data = malloc(capacity);
+        if (!data) { fclose(f); return -1; }
+    }
     for (;;) {
         if (size == capacity) {
             capacity = capacity ? capacity * 2 : 1u << 20;
