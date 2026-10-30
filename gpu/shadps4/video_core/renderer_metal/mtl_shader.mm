@@ -12,6 +12,7 @@
 #include <xxhash.h>
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -840,10 +841,26 @@ MetalObjects BuildLibrary(id<MTLDevice> device, const std::string& msl, const st
             options.fastMathEnabled = !safe_math;
         }
         NSError* error = nil;
+        const auto library_start = std::chrono::steady_clock::now();
         id<MTLLibrary> library =
             [device newLibraryWithSource:[NSString stringWithUTF8String:msl.c_str()]
                                  options:options
                                    error:&error];
+        // BB_SHADER_LOG=1 (N2.5): MSL compiled to libraries, the running total, against the
+        // pipeline builds' own total (PsoCache's counters).
+        static const bool shader_log = [] {
+            const char* env = std::getenv("BB_SHADER_LOG");
+            return env && env[0] == '1';
+        }();
+        if (shader_log) {
+            static std::atomic<u64> libraries{}, library_us{};
+            const u64 us = std::chrono::duration_cast<std::chrono::microseconds>(
+                               std::chrono::steady_clock::now() - library_start)
+                               .count();
+            const u64 total = library_us += us;
+            std::printf("Metal library: %llu compiled, %.1f ms this one, %.1f ms in all\n",
+                        static_cast<unsigned long long>(++libraries), us / 1000.0, total / 1000.0);
+        }
         if (!library) {
             objects.error = "Metal: " + FirstMetalError(error ? error.localizedDescription.UTF8String
                                                               : "unknown error");

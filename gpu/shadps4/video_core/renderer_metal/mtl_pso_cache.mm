@@ -399,13 +399,14 @@ bool PsoCache::WriteArchive() {
     // session (hits) or pipelines still compile.
     // The duration grows with the session's pipeline count (every write re-adds them all).
     std::printf("Metal binary archive: wrote %llu pipelines in %.0f ms; this session %llu from the "
-                "archive, %llu compiled\n",
+                "archive, %llu compiled (render %.1f ms, compute %.1f ms in all)\n",
                 static_cast<unsigned long long>(descriptors.count - add_failures),
                 std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
                                                           write_start)
                     .count(),
                 static_cast<unsigned long long>(counters.archive_hits.load()),
-                static_cast<unsigned long long>(counters.compiled.load()));
+                static_cast<unsigned long long>(counters.compiled.load()),
+                counters.render_us.load() / 1000.0, counters.compute_us.load() / 1000.0);
     std::fflush(stdout);
     return true;
 }

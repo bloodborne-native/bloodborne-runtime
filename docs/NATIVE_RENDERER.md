@@ -245,7 +245,7 @@ the test save, translator, no faults):
 | N2.2 · the inventory | 100% `████████████████████` | The shaders use the user data only to locate their resources (below) |
 | N2.3 · mesh draws from the draw state | 100% `████████████████████` | Done, opt-in (`BB_RENDER_BOUNDARY=flat`): mesh draws' flattened user data from the draw state on the workers and the GPU thread, without the walker; exact; the observer still costs 42 CPU points ([below](#n23s-design-the-flat-buffer-from-the-draw-state)) |
 | N2.4 · the other draw kinds | 80% `████████████████░░░░` | The draw methods' other draws: done. Compute passes and the draws outside the methods: most read their sharps straight from the user-data registers, which needs no boundary ([below](#n24-the-other-draw-kinds-and-compute-passes)). Left: method draws whose program has no plan (6% of draw stages), the draws (2%) and surface operations (16% of dispatch stages) that walk tables |
-| N2.5 · ahead of time | 10% `██░░░░░░░░░░░░░░░░░░` | Designed and measured ([below](#n25-shaders-ahead-of-time)): converting shaders costs 0.4 s of a first play, building Metal pipelines 2.9 s (2.6 s as the level first appears). Next: a launcher step that builds pipelines, not only shaders |
+| N2.5 · ahead of time | 10% `██░░░░░░░░░░░░░░░░░░` | Designed and measured ([below](#n25-shaders-ahead-of-time)): a true first play, with Metal's own system cache empty too, spends 8.4 s compiling MSL into libraries and 4.9 s building pipelines; the worst frame takes 4.9 s. Next: a launcher step that compiles libraries; pipelines need keys the shaders do not hold |
 
 ### The inventory (N2.2)
 
@@ -384,9 +384,20 @@ M3 Pro): converting the game's shaders is cheap, 336 variants in 0.4 s (275 prog
 variants, 1.2 ms each on average, 61 later variants). The cost is building Metal pipelines from
 them: 589 pipelines in 2.9 s. 2.6 s of it falls in two frames as the level first appears (1.1 s
 and 1.5 s); during play it is a few hitches of 50 to 230 ms when new draws appear. Later sessions
-load the pipelines from the Metal binary archive. A pipeline also depends on draw state the
-shader does not carry (the vertex layout, the render targets' formats, blending), so what the step
-must build, or predict, is pipelines, not only shaders.
+load the pipelines from the Metal binary archive.
+
+**Those numbers had Metal's system cache warm.** Metal keeps its own compiled shaders in the user's
+cache folder (`com.apple.metal`), across apps' caches and across a deleted shader cache of ours, so
+emptying our cache is not a first play: libraries took a median of 0.6 ms. One run with that folder
+moved aside too (`BB_SHADER_LOG=1`, the same place): 335 libraries in 8.4 s (a median of 14.3 ms,
+the slowest 313 ms), 269 pipelines in 4.9 s (render 3.7 s, compute 1.2 s), the worst frame 4.9 s and
+14 frames over 100 ms, 12.9 s in all. Library compiling, not pipeline building, is the larger part.
+
+**What a step can reach.** A pipeline's key holds which vertex and pixel programs are paired, the
+vertex formats, the render targets' formats, blending, write masks and sample counts. None of that
+is in the shader bundles: the engine chooses it at draw time. So libraries can be built from the
+game's files, while pipelines need keys that only a play session has recorded (`WarmUp` replays
+those a player has seen).
 
 **What tells variants apart:** of the 61 later variants, 37 differ only in their binding numbers,
 20 in images or buffers (an image's type or sRGB, a buffer's format), 5 in runtime settings and
