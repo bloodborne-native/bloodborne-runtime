@@ -23,6 +23,7 @@ submodule), or as recompiled native code it generates.
 | **bloodborne-runtime** (this one) | Loads the game: the PS4 libraries, the renderer |
 | [bloodborne-launcher](https://github.com/bloodborne-native/bloodborne-launcher) | The independent launcher: profiles, saves and settings |
 | [bloodborne-mac](https://github.com/bloodborne-native/bloodborne-mac) | Packages the launcher as the macOS app, with releases and player guides |
+| [bloodborne-ios](https://github.com/bloodborne-native/bloodborne-ios) | The iPhone app (a proof of concept): the launcher with the game inside, built on this runtime's iOS code |
 
 **Players:** download the app from [bloodborne-mac](https://github.com/bloodborne-native/bloodborne-mac/releases/latest).
 
