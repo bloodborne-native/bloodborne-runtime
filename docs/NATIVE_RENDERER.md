@@ -498,13 +498,17 @@ and attributes and colours are still real). What the header holds:
   on the executable's programs).
 - Colour export formats, one nibble per target: 138 of 147 pixel variants. The other 9 declare an
   output in a draw with no colour target, so a pixel shader needs two candidates at most.
-- Vertex inputs (semantic, register, size): the table was found in 90 of 130 programs; the declared
-  size equals the real component count for 290 of 311 attributes.
+- Vertex inputs (semantic, register, declared size): the table is there in all 130 programs. The
+  declared size is not the mesh's: components taken from it alone keep 56 of 99 vertex variants,
+  and classes alone cost far less (263 of 282 overall, against 227 with both from the list).
+  Components from the semantic and declared size together are right for every attribute in 82 of
+  96 programs with reflection (fitted on the same programs, not held out); 20 of the executable's
+  34 fit with no names, and most of the rest declare 4 components where the mesh supplies 2.
 
 Images that are cubes come from the code: V_CUBEID's result reaches the sample's coordinates, right
 in 280 of 282 variants. A colour target needs only its number class and swizzle. Still to supply:
-each vertex attribute's class, the other 40 vertex tables, the number of input registers (12
-variants depend on it), and colour swizzles. Real cache hits are not measured yet.
+vertex attributes' components and classes where the rules above miss, the number of input
+registers (12 variants depend on it), and colour swizzles. Real cache hits are not measured yet.
 
 **Progress for the player.** Cache entries are named by program hash and permutation, so the step
 can list what is compiled, skip it, and show compiled of total; what play compiled counts.
