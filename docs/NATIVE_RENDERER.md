@@ -358,9 +358,11 @@ buffers without a slot are what is left.
 
 ### N2.5: shaders ahead of time
 
-**The decision (maintainer, 2026-10-30):** a launcher step, like the recompiled-code build,
-converts the game's shaders once into the shader cache. Converting at first use stays the default
-until the player runs it, and stays the fallback for anything the step did not convert.
+**The decision (maintainer, 2026-10-30, 2026-10-31):** a launcher step, like the recompiled-code
+build, converts the game's shaders once into the shader cache. It is a setting in the launcher's
+recompiler settings that a player enables if they want it, because it takes time; nobody has to
+wait through it. Converting at first use stays the default until the player runs it, and stays the
+fallback for anything the step did not convert.
 
 **What there is to convert** (the player's 1.09 dump):
 
