@@ -507,8 +507,19 @@ and attributes and colours are still real). What the header holds:
 
 Images that are cubes come from the code: V_CUBEID's result reaches the sample's coordinates, right
 in 280 of 282 variants. A colour target needs only its number class and swizzle. Still to supply:
-vertex attributes' components and classes where the rules above miss, the number of input
-registers (12 variants depend on it), and colour swizzles. Real cache hits are not measured yet.
+vertex attributes' components and classes where the rules above miss.
+
+**A list from the files, measured.** A local prototype translated programs from the game's files
+before play, with up to four candidates each, and looked every real variant up by its SPIR-V: 186
+of the 249 graphics variants of a cold run were already there (pixel 120 of 147, vertex 66 of 102),
+186 of 287 with compute and tessellation, which stay at first use. All 8,373 vertex and pixel
+programs but one took 18.2 s on one thread: 31,684 translations, 23,470 distinct shaders, no faults;
+501 translations (167 vertex programs) reach an assert that must be survivable, and one program
+ended the run until skipped, cause unknown, so the step has to isolate failures. At the measured
+compiler speed those shaders would take very roughly 90 s; that is not measured. With only that
+session's 614 shaders compiled before play, a true first play's stalls fell from 10.9 s to 7.5 s
+and the second-worst frame from 1.6 s to 0.85 s (one run), but the worst frame stayed at 3.2 s:
+what remains is mostly pipelines, which a list of shaders does not build. The step is not built.
 
 **Progress for the player.** Cache entries are named by program hash and permutation, so the step
 can list what is compiled, skip it, and show compiled of total; what play compiled counts.
