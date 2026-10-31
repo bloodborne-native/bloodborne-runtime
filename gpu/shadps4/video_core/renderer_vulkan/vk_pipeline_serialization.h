@@ -7,6 +7,11 @@
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
 
+namespace Serialization {
+/// Metal: no buffer offset table, each stage's bindings; shaders independent of targets and meshes.
+inline constexpr u32 ShaderBinaryVersion = 27u;
+} // namespace Serialization
+
 namespace Vulkan {
 
 void RegisterPipelineData(const ComputePipelineKey& key,

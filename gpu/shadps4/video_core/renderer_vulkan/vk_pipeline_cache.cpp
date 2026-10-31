@@ -26,6 +26,7 @@
 #include "shader_recompiler/runtime_info.h"
 #include "video_core/amdgpu/liverpool.h"
 #include "video_core/cache_storage.h"
+#include "video_core/renderer_vulkan/vk_shader_scan.h"
 #include "video_core/renderer_vulkan/vk_backend_device.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
 #include "video_core/renderer_vulkan/motion_history.h"
@@ -41,7 +42,14 @@
 #include "bbport_settings.h"
 #include "game_profile.h"
 #include "bbport_toggles.h"
+#include "video_core/renderer_vulkan/vk_metal_shadow.h"
 
+extern thread_local sigjmp_buf* bb_assert_recover;
+
+#include "video_core/renderer_vulkan/vk_presenter.h"
+extern std::atomic<unsigned> bb_list_shaders_done, bb_list_shaders_total, bb_list_pipelines_done,
+    bb_list_pipelines_total;
+extern std::unique_ptr<Vulkan::Presenter> presenter;
 namespace Vulkan {
 
 namespace {
@@ -1315,6 +1323,337 @@ static void LogVariant(u64 pgm_hash, Shader::HwStage stage, size_t perm_idx, dou
                 what.c_str());
 }
 
+// BB_SHADER_COMPILE=1: the game's programs translated from the game's files before
+// play; every real variant is then looked up by its SPIR-V.
+static std::unordered_set<u64> list_spirv; ///< every SPIR-V the step made
+
+
+/// A shader the step has translated and not yet compiled.
+struct AheadShader {
+    u64 spirv_hash;
+    u64 program;
+    HwStage stage;
+    std::vector<u32> spirv;
+};
+static std::vector<AheadShader> ahead_queue;
+static std::array<u32, 4> list_format{};
+static u32 list_image = 0;
+
+__attribute__((noinline)) int PipelineCache::TranslateForCompile(HwStage hw, SwStage sw,
+                                                           const Shader::ShaderParams& params,
+                                                           Shader::RuntimeInfo& rt,
+                                                           std::span<const u32> code,
+                                                           const Shader::Gcn::FetchShaderData* fetch,
+                                                           const AmdGpu::Buffer* attribs) {
+    static std::vector<u32> flat(256);
+    static sigjmp_buf recover;
+    if (const int why = sigsetjmp(recover, 1); why != 0) {
+        runtime_fault_recover = nullptr;
+        bb_assert_recover = nullptr;
+        return why == 2 ? 2 : 1;
+    }
+    runtime_fault_recover = &recover;
+    bb_assert_recover = &recover;
+    Shader::Info guess{hw, sw, params};
+    guess.list_mode = true;
+    guess.flat_override = &flat;
+    guess.fetch_override = fetch;
+    guess.attrib_override = attribs;
+    guess.list_stride = list_format[0];
+    guess.list_data_format = list_format[1];
+    guess.list_num_format = list_format[2];
+    guess.list_image_type = list_image;
+    guess.list_swizzle = list_format[3];
+    Shader::Backend::Bindings next{};
+    if (sw != SwStage::Compute) {
+        next.EnterStage(u32(sw));
+    }
+    try {
+        const auto ir = Shader::TranslateProgram(code, ahead_pools, guess, rt, profile);
+        const auto spv = Shader::Backend::SPIRV::EmitSPIRV(profile, rt, ir, next);
+        const u64 spirv_hash = XXH3_64bits(spv.data(), spv.size() * 4);
+        if (list_spirv.insert(spirv_hash).second) {
+            ahead_queue.push_back({spirv_hash, params.hash, hw, spv});
+        }
+    } catch (const std::exception& e) {
+        runtime_fault_recover = nullptr;
+        bb_assert_recover = nullptr;
+        static int shown = 0;
+        if (shown++ < 5) {
+            std::printf("Shader compile: skipped %llx: %s\n", static_cast<unsigned long long>(params.hash), e.what());
+        }
+        return 3;
+    }
+    runtime_fault_recover = nullptr;
+    bb_assert_recover = nullptr;
+    return 0;
+}
+
+// The build runs on a thread of its own; this thread presents blank frames, so the overlay's bar
+// keeps moving.
+void PipelineCache::CompileAhead() {
+    static bool started = false;
+    if (started || !std::getenv("BB_SHADER_COMPILE")) {
+        return;
+    }
+    started = true;
+    {
+        // Compiled by an earlier launch of this version.
+        const auto done = Common::FS::GetUserPath(Common::FS::PathType::CacheDir) / "shaders-ahead.txt.complete";
+        u32 version = 0;
+        if (std::ifstream(done) >> version; version == Serialization::ShaderBinaryVersion) {
+            return;
+        }
+    }
+    static std::atomic<bool> finished{false};
+    static PipelineCache* self;
+    self = this;
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, 16 * 1024 * 1024);
+    pthread_t thread;
+    pthread_create(&thread, &attr, [](void*) -> void* {
+        self->CompileAheadWork();
+        finished.store(true);
+        return nullptr;
+    }, nullptr);
+    while (!finished.load()) {
+        presenter->Present(presenter->PrepareBlankFrame(false), false, false);
+        std::this_thread::sleep_for(std::chrono::milliseconds(33));
+    }
+    pthread_join(thread, nullptr);
+    bb_list_shaders_total.store(0);
+}
+
+void PipelineCache::CompileAheadWork() {
+    const char* game_dir = std::getenv("BB_GAME_DIR");
+    static const ShaderScan scan = ScanGameShaders(game_dir ? game_dir : ".");
+    const auto& blob = scan.code;
+    static std::array<u32, Shader::ShaderParams::NumShaderUserData> zero_ud{};
+    const auto start_time = std::chrono::steady_clock::now();
+    u32 programs = 0, faults = 0, asserts = 0, exceptions = 0;
+    // The translator can spin on code it was not meant to see: a stuck program is interrupted and
+    // skipped through the fault path.
+    static std::atomic<u64> watch_ticket{0};
+    static std::atomic<bool> watch_stop{false};
+    static std::atomic<u32> timeouts{0};
+    const pthread_t target = pthread_self();
+    std::thread watchdog([target] {
+        u64 seen = 0;
+        int ticks = 0;
+        while (!watch_stop.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            const u64 now = watch_ticket.load();
+            ticks = now == seen ? ticks + 1 : 0;
+            seen = now;
+            if (ticks >= 20) {
+                ticks = 0;
+                timeouts.fetch_add(1);
+                pthread_kill(target, SIGSEGV);
+            }
+        }
+    });
+    for (const auto& shader : scan.shaders) {
+        const u64 hash = shader.hash;
+        const u32 kind = shader.kind, rsrc1 = shader.rsrc1, rsrc2 = shader.rsrc2;
+        const u32 z_format = shader.z_format, col = shader.colour, en = shader.enable;
+        const u32 addr = shader.address, inputs = shader.inputs, exe = shader.executable;
+        const size_t offset = shader.offset, length = shader.length;
+        if (hash == 0xf9c8eb4aULL) {
+            continue; // the translator stops silently on this one
+        }
+        if (kind == 4) {
+            // Compute: every register is in the header; the formats are tried.
+            static const std::array<std::array<u32, 4>, 16> formats{{{4, 10, 0, 0x4567}, {4, 10, 0, 0x6547},
+                {4, 10, 4, 0x4567}, {4, 10, 9, 0x6547}, {4, 4, 7, 0x4001}, {4, 4, 4, 0x4000}, {4, 5, 7, 0x4501},
+                {4, 5, 0, 0x4501}, {4, 6, 7, 0x4561}, {8, 11, 7, 0x4501}, {8, 12, 7, 0x4567}, {16, 14, 7, 0x4567},
+                {16, 14, 4, 0x4567}, {12, 13, 4, 0x4560}, {1, 1, 0, 0x4001}, {1, 1, 0, 0x0004}}};
+            static const std::array<u32, 5> images{9, 13, 10, 8, 12};
+            const std::span<const u32> code{blob.data() + offset / 4, length / 4};
+            ++programs;
+            for (const auto& format : formats) {
+                for (const u32 image : images) {
+                    Shader::RuntimeInfo rt{};
+                    rt.Initialize(HwStage::Compute, SwStage::Compute);
+                    rt.props.num_user_data = (rsrc2 >> 1) & 0x1f;
+                    rt.props.num_allocated_vgprs = (rsrc1 & 0x3f) * 4;
+                    rt.props.fp_round_mode32 = AmdGpu::FpRoundMode((rsrc1 >> 12) & 3);
+                    rt.props.fp_round_mode16_64 = AmdGpu::FpRoundMode((rsrc1 >> 14) & 3);
+                    rt.props.fp_denorm_mode32 = AmdGpu::FpDenormMode((rsrc1 >> 16) & 3);
+                    rt.props.fp_denorm_mode16_64 = AmdGpu::FpDenormMode((rsrc1 >> 18) & 3);
+                    rt.hw.cs.workgroup_size = {z_format, col, en};
+                    rt.hw.cs.tgid_enable = {bool(rsrc2 >> 7 & 1), bool(rsrc2 >> 8 & 1), bool(rsrc2 >> 9 & 1)};
+                    const Shader::ShaderParams params{
+                        .user_data = std::span<const u32, Shader::ShaderParams::NumShaderUserData>{
+                            zero_ud.data(), Shader::ShaderParams::NumShaderUserData},
+                        .code = code,
+                        .hash = hash,
+                    };
+                    list_format = format;
+                    list_image = image;
+                    watch_ticket.fetch_add(1);
+                    const int why = TranslateForCompile(HwStage::Compute, SwStage::Compute, params, rt, code, nullptr, nullptr);
+                    list_format = {};
+                    list_image = 0;
+                    if (why != 0) {
+                        ++(why == 2 ? asserts : why == 3 ? exceptions : faults);
+                    }
+                }
+            }
+            continue;
+        }
+        const bool fragment = kind == 2;
+        const auto hw = fragment ? HwStage::Fragment : HwStage::Vertex;
+        const auto sw = fragment ? SwStage::Fragment : SwStage::Vertex;
+        const std::span<const u32> code{blob.data() + offset / 4, length / 4};
+        const auto& input_order = shader.input_order;
+        const u32 candidates = fragment ? 1 : std::max<u32>(u32(shader.attribute_classes.size()), 1);
+        ++programs;
+        for (u32 candidate = 0; candidate < candidates; ++candidate) {
+            const bool front_face = fragment && (z_format >> 8 & 1) != 0;
+            Shader::RuntimeInfo rt{};
+            rt.Initialize(hw, sw);
+            rt.props.num_user_data = (rsrc2 >> 1) & 0x1f;
+            rt.props.num_allocated_vgprs = ((rsrc1 & 0x3f) + 1) * 4;
+            rt.props.fp_round_mode32 = AmdGpu::FpRoundMode((rsrc1 >> 12) & 3);
+            rt.props.fp_round_mode16_64 = AmdGpu::FpRoundMode((rsrc1 >> 14) & 3);
+            rt.props.fp_denorm_mode32 = AmdGpu::FpDenormMode((rsrc1 >> 16) & 3);
+            rt.props.fp_denorm_mode16_64 = AmdGpu::FpDenormMode((rsrc1 >> 18) & 3);
+            std::optional<Shader::Gcn::FetchShaderData> fetch;
+            std::vector<AmdGpu::Buffer> attribs(256);
+            if (fragment) {
+                std::memcpy(&rt.hw.fs.en_flags, &en, sizeof(en));
+                std::memcpy(&rt.hw.fs.addr_flags, &addr, sizeof(addr));
+                rt.hw.fs.num_inputs = inputs;
+                rt.hw.fs.z_export_format = static_cast<AmdGpu::ShaderExportFormat>(z_format & 0xff);
+                for (size_t i = 0; i < input_order.size(); ++i) {
+                    rt.hw.fs.inputs[i].param_index = input_order[i];
+                }
+                rt.hw.fs.front_face_all_bits = front_face;
+                // The same values PipelineCache::BuildRuntimeInfo gives (Profile::free_colour).
+                for (u32 i = 0; i < Shader::MaxColorBuffers; ++i) {
+                    const auto format = static_cast<AmdGpu::ShaderExportFormat>((col >> (4 * i)) & 0xf);
+                    auto& colour = rt.hw.fs.color_buffers[i];
+                    colour.data_format = AmdGpu::DataFormat::FormatInvalid;
+                    colour.num_format = format == AmdGpu::ShaderExportFormat::ABGR_UINT16  ? AmdGpu::NumberFormat::Uint
+                                        : format == AmdGpu::ShaderExportFormat::ABGR_SINT16 ? AmdGpu::NumberFormat::Sint
+                                                                                       : AmdGpu::NumberFormat::Float;
+                    colour.export_format = format;
+                    colour.swizzle = AmdGpu::IdentityMapping;
+                }
+            } else {
+                rt.props.num_input_vgprs = exe ? 0 : 3;
+                // The only output map the game sets; a shader with no such export is unchanged.
+                rt.hw.vs.num_outputs = 1;
+                rt.hw.vs.outputs[0][0] = Shader::Output::ClipDist0;
+                rt.hw.vs.outputs[0][1] = Shader::Output::ClipDist1;
+                fetch.emplace();
+                u32 index = 0;
+                const auto no_attributes = std::vector<u8>{};
+                for (const u8 number : shader.attribute_classes.empty()
+                                           ? no_attributes
+                                           : shader.attribute_classes[candidate]) {
+                    Shader::Gcn::VertexAttribute attrib{};
+                    attrib.semantic = u8(index);
+                    attrib.dest_vgpr = u8(4 + 4 * index);
+                    attrib.num_elements = 4;
+                    attrib.dword_offset = u8(index * 4);
+                    fetch->attributes.push_back(attrib);
+                    auto& v = attribs[attrib.dword_offset];
+                    v.base_address = 1;
+                    v.num_records = 1;
+                    v.data_format = u32(AmdGpu::DataFormat::Format32_32_32_32);
+                    v.num_format = u32(number == 2   ? AmdGpu::NumberFormat::Uint
+                                       : number == 1 ? AmdGpu::NumberFormat::Sint
+                                                     : AmdGpu::NumberFormat::Float);
+                    using S = AmdGpu::CompSwizzle;
+                    // Any format the host fills gives the same shader (Gcn::HostFillsAttribute).
+                    v.dst_sel_x = u32(S::Red);
+                    v.dst_sel_y = u32(S::Green);
+                    v.dst_sel_z = u32(S::Blue);
+                    v.dst_sel_w = u32(S::Alpha);
+                    ++index;
+                }
+            }
+            const Shader::ShaderParams params{
+                .user_data = std::span<const u32, Shader::ShaderParams::NumShaderUserData>{
+                    zero_ud.data(), Shader::ShaderParams::NumShaderUserData},
+                .code = code,
+                .hash = hash,
+            };
+            watch_ticket.fetch_add(1);
+            const int why = TranslateForCompile(hw, sw, params, rt, code, fetch ? &*fetch : nullptr, attribs.data());
+            if (why != 0) {
+                ++(why == 2 ? asserts : why == 3 ? exceptions : faults);
+            }
+        }
+    }
+    watch_stop.store(true);
+    watchdog.join();
+    // What an earlier run compiled is skipped; the .complete file stops later launches here.
+    const auto record_path = Common::FS::GetUserPath(Common::FS::PathType::CacheDir) / "shaders-ahead.txt";
+    std::unordered_set<u64> compiled;
+    {
+        std::ifstream record(record_path);
+        std::string line;
+        if (std::getline(record, line) &&
+            line == fmt::format("version {}", Serialization::ShaderBinaryVersion)) {
+            while (std::getline(record, line)) {
+                compiled.insert(std::strtoull(line.c_str(), nullptr, 16));
+            }
+        }
+    }
+    const bool fresh = compiled.empty();
+    std::ofstream record(record_path, fresh ? std::ios::trunc : std::ios::app);
+    if (fresh) {
+        record << fmt::format("version {}\n", Serialization::ShaderBinaryVersion);
+    }
+    bb_list_shaders_done.store(u32(std::ranges::count_if(
+        list_spirv, [&](u64 hash) { return compiled.contains(hash); })));
+    bb_list_shaders_total.store(u32(list_spirv.size()));
+    static std::vector<VideoCore::Backend::ShaderHandle> modules;
+    constexpr u32 most_waiting = 64;
+    const u32 already = bb_list_shaders_done.load();
+    u32 submitted = already;
+    for (const auto& shader : ahead_queue) {
+        if (compiled.contains(shader.spirv_hash)) {
+            continue;
+        }
+        while (submitted - bb_list_shaders_done.load() > most_waiting) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        modules.push_back(MakeShader(shader.spirv, GetShaderName(shader.stage, shader.program, 0)));
+        if (shader.stage == HwStage::Compute) {
+            static u64 fake = 0x8000000;
+            MetalShadow::Compute(ComputePipelineKey{size_t(fake)}, NativeModule(modules.back()),
+                                 vk::Pipeline{reinterpret_cast<VkPipeline>(fake += 16)});
+        }
+        ++submitted;
+        record << fmt::format("{:x}\n", shader.spirv_hash);
+    }
+    int still = 0;
+    u32 last = 0;
+    while (bb_list_shaders_done.load() < bb_list_shaders_total.load() && still < 100) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        const u32 now = bb_list_shaders_done.load();
+        still = now == last ? still + 1 : 0;
+        last = now;
+    }
+    record.close();
+    std::ofstream(record_path.string() + ".complete") << Serialization::ShaderBinaryVersion;
+    std::printf("Shader compile: %u programs, %zu shaders, %u already compiled, %u faults, %u asserts, "
+                "%u exceptions, %u timeouts, %.1f s\n", programs, list_spirv.size(), already, faults,
+                asserts, exceptions, timeouts.load(),
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - start_time).count());
+    std::fflush(stdout);
+    ahead_queue.clear();
+    ahead_queue.shrink_to_fit();
+    if (std::getenv("BB_SHADER_COMPILE_EXIT")) {
+        std::_Exit(0);
+    }
+}
+
+
 VideoCore::Backend::ShaderHandle PipelineCache::CompileModule(Shader::Info& info, Shader::RuntimeInfo& runtime_info,
                                               const std::span<const u32>& code, size_t perm_idx,
                                               Shader::Backend::Bindings& binding, bool cached) {
@@ -1466,6 +1805,9 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
                                                 SwStage sw_stage,
                                                 const Shader::ShaderParams& params,
                                                 Shader::Backend::Bindings& binding) {
+    if (!sel.worker) {
+        CompileAhead();
+    }
     auto runtime_info = BuildRuntimeInfo(sel, hw_stage, sw_stage);
     if (profile.stage_bindings && sw_stage != SwStage::Compute) {
         binding.EnterStage(u32(sw_stage));

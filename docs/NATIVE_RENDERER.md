@@ -245,7 +245,7 @@ the test save, translator, no faults):
 | N2.2 · the inventory | 100% `████████████████████` | The shaders use the user data only to locate their resources (below) |
 | N2.3 · mesh draws from the draw state | 100% `████████████████████` | Done, opt-in (`BB_RENDER_BOUNDARY=flat`): mesh draws' flattened user data from the draw state on the workers and the GPU thread, without the walker; exact; the observer still costs 42 CPU points ([below](#n23s-design-the-flat-buffer-from-the-draw-state)) |
 | N2.4 · the other draw kinds | 80% `████████████████░░░░` | The draw methods' other draws: done. Compute passes and the draws outside the methods: most read their sharps straight from the user-data registers, which needs no boundary ([below](#n24-the-other-draw-kinds-and-compute-passes)). Left: method draws whose program has no plan (6% of draw stages), the draws (2%) and surface operations (16% of dispatch stages) that walk tables |
-| N2.5 · ahead of time | 40% `████████░░░░░░░░░░░░` | Designed and measured ([below](#n25-shaders-ahead-of-time)): a true first play, with Metal's own system cache empty too, spends 8.4 s compiling MSL into libraries and 4.9 s building pipelines; the worst frame takes 4.9 s. Shaders compiling on worker threads and translated ahead of the GPU thread (opt-in) bring the stalls from 12 s to 7 s and the worst frame to 2.0 s. Next: a long session with `BB_SHADER_AHEAD=1` before it becomes the default, then the pipelines' 4.9 s, which need keys the shaders do not hold. The optional step builds its list on the player's device from the game's files; translating from such a list reproduced 314 of 315 variants. Next: predict each program's key from the files |
+| N2.5 · ahead of time | 70% `██████████████░░░░░░` | Designed and measured ([below](#n25-shaders-ahead-of-time)): a true first play, with Metal's own system cache empty too, spends 8.4 s compiling MSL into libraries and 4.9 s building pipelines; the worst frame takes 4.9 s. Shaders compiling on worker threads and translated ahead of the GPU thread (opt-in) bring the stalls from 12 s to 7 s and the worst frame to 2.0 s. Next: a long session with `BB_SHADER_AHEAD=1` before it becomes the default, then the pipelines' 4.9 s, which need keys the shaders do not hold. The optional step builds its list on the player's device from the game's files; translating from such a list reproduced 314 of 315 variants. Next: predict each program's key from the files |
 
 ### The inventory (N2.2)
 
@@ -637,6 +637,17 @@ cache 268 MB), then a first play with empty test caches apart from Metal's and t
 one run of each: the scripted run had 2.7 s of stalls, all while loading (723 ms worst), no compile
 in any window of play, a worst frame in play of 67 ms and 49 FPS. Charged R2 eight times: 16
 compiles and 120 ms in all, a worst frame of 76 ms. Only Iosefka's Clinic has been measured.
+
+The step is in the runtime (`BB_SHADER_COMPILE=1`, `BB_GAME_DIR` the game's folder): `vk_shader_scan`
+reads every program from the game's files on the player's device, the compile translates them,
+shows compiled of total on an overlay, and records each finished shader in the cache's
+`shaders-ahead.txt`. A stopped run continues from that record (150 s instead of 210 s after
+stopping at 3,145) and a finished one is not repeated until the shader version changes. 8,441
+programs give 12,554 shaders in 3.5 minutes on an M3 Pro and 207 MB of Metal's cache. Play needs no
+lookup: Metal finds a shader by its content. With this step alone a first play has no compile in
+any window of play; pipelines are still made at first use, most while loading (1.9 s worst frame,
+one run). The stopped run's record held 97 hashes the next run did not make, so some translations
+differ between runs; the cause is open. 167 vertex programs stop the translator and are skipped.
 
 The engine's render state could not be located by reading the executable. The pipeline step needs
 the state sets seen in play, so they are to be recorded on the player's device during normal play

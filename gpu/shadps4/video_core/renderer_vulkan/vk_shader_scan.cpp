@@ -1,0 +1,259 @@
+// bbport: see vk_shader_scan.h. The layouts are the PS4 toolchain's: a "Shdr" header, then the code;
+// an "OrbShdr" footer with the length and hash; in bundled shaders also a record per input.
+#include "video_core/renderer_vulkan/vk_shader_scan.h"
+
+#include <algorithm>
+#include <cstring>
+#include <fstream>
+#include <string_view>
+#include <unordered_set>
+
+#include <zlib.h>
+
+namespace Vulkan {
+namespace {
+
+using Bytes = std::vector<u8>;
+
+Bytes ReadFile(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    Bytes data(file ? size_t(file.tellg()) : 0);
+    file.seekg(0);
+    file.read(reinterpret_cast<char*>(data.data()), data.size());
+    return data;
+}
+
+template <typename T>
+T Read(std::string_view data, size_t offset) {
+    T value{};
+    std::memcpy(&value, data.data() + offset, sizeof(T));
+    return value;
+}
+
+u32 ReadBig32(std::string_view data, size_t offset) {
+    return __builtin_bswap32(Read<u32>(data, offset));
+}
+
+/// A DCX container: a zlib stream after the "DCA" header.
+Bytes Decompress(const Bytes& file) {
+    const std::string_view view{reinterpret_cast<const char*>(file.data()), file.size()};
+    const size_t mark = view.find(std::string_view{"DCA\0", 4});
+    if (mark == view.npos) {
+        return {};
+    }
+    const size_t start = mark + ReadBig32(view, mark + 4);
+    Bytes out(file.size() * 4);
+    z_stream stream{};
+    if (inflateInit(&stream) != Z_OK) {
+        return {};
+    }
+    stream.next_in = const_cast<u8*>(file.data() + start);
+    stream.avail_in = uInt(file.size() - start);
+    int result = Z_OK;
+    while (result == Z_OK) {
+        stream.next_out = out.data() + stream.total_out;
+        stream.avail_out = uInt(out.size() - stream.total_out);
+        result = inflate(&stream, Z_NO_FLUSH);
+        if (result == Z_OK && stream.avail_out == 0) {
+            out.resize(out.size() * 2);
+        }
+    }
+    out.resize(stream.total_out);
+    inflateEnd(&stream);
+    return out;
+}
+
+std::string_view CString(std::string_view data, size_t offset) {
+    const size_t end = data.find('\0', offset);
+    return data.substr(offset, end == data.npos ? data.npos : end - offset);
+}
+
+bool IsSemantic(std::string_view text) {
+    size_t i = 0;
+    while (i < text.size() && ((text[i] >= 'A' && text[i] <= 'Z') || text[i] == '_')) {
+        ++i;
+    }
+    if (i == 0) {
+        return false;
+    }
+    return std::all_of(text.begin() + i, text.end(), [](char c) { return c >= '0' && c <= '9'; });
+}
+
+bool IsInputName(std::string_view text) {
+    if (text.size() < 3 || !std::all_of(text.begin(), text.end(), [](char c) {
+            return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+                   c == '_' || c == '.';
+        })) {
+        return false;
+    }
+    const auto root = text.substr(0, text.find('.'));
+    static constexpr std::array<std::string_view, 8> roots{
+        "vtxInput", "vsIn", "In", "IN", "input", "VertexMain", "vPosition", "vTexCoords"};
+    return std::find(roots.begin(), roots.end(), root) != roots.end();
+}
+
+/// The semantic of each vertex input, from the records after the footer.
+std::vector<std::string_view> InputSemantics(std::string_view data, size_t footer) {
+    std::vector<std::string_view> out;
+    const size_t size = data.size();
+    for (size_t at = footer + 28; at < ((size - 16) & ~size_t{3}); at += 4) {
+        const u32 zero = Read<u32>(data, at);
+        const u32 name = Read<u32>(data, at + 4);
+        const u32 semantic = Read<u32>(data, at + 8);
+        if (zero == 0 && name > 8 && name < size && semantic > 8 && semantic < size &&
+            at + 4 + name < size && at + 8 + semantic < size) {
+            const auto name_text = CString(data, at + 4 + name);
+            const auto semantic_text = CString(data, at + 8 + semantic);
+            if (IsInputName(name_text) && IsSemantic(semantic_text)) {
+                out.push_back(semantic_text);
+            }
+        }
+    }
+    return out;
+}
+
+u8 SemanticClass(std::string_view semantic) {
+    if (semantic == "BLENDINDICES" || semantic == "NORMAL" || semantic == "TANGENT" ||
+        semantic == "BINORMAL") {
+        return 2;
+    }
+    return semantic == "TEXCOORD" ? 1 : 0;
+}
+
+class Scanner {
+public:
+    void Add(std::string_view data, size_t header, size_t footer, bool executable) {
+        const u64 hash = Read<u64>(data, footer + 16) & 0xffffffffULL;
+        if (seen.contains(hash)) {
+            return;
+        }
+        std::array<u32, 60> w{};
+        std::memcpy(w.data(), data.data() + header + 8,
+                    std::min(sizeof(w), data.size() - header - 8));
+        const u32 kind = w[0] & 0xff;
+        if (kind != 1 && kind != 2 && kind != 4) {
+            return;
+        }
+        seen.insert(hash);
+        const size_t code = header + w[4] + 0x10;
+        const size_t length = Read<u32>(data, footer + 8) >> 8;
+
+        ScannedShader shader{.hash = hash, .kind = kind, .rsrc1 = w[6], .rsrc2 = w[7],
+                             .colour = w[9], .enable = w[10], .executable = executable,
+                             .offset = out.code.size() * 4, .length = length};
+        out.code.resize(out.code.size() + (length + 3) / 4);
+        std::memcpy(reinterpret_cast<char*>(out.code.data()) + shader.offset, data.data() + code,
+                    length);
+        if (kind == 4) {
+            shader.z_format = w[8];
+        } else {
+            shader.z_format = w[8] | (((w[13] >> 24) & 1) << 8);
+            shader.address = w[11];
+            shader.inputs = w[12];
+        }
+        if (kind == 2) {
+            const u32 count = w[12];
+            const size_t table = code - ((2 * count + 3) & ~3u);
+            for (u32 i = 0; i < count; ++i) {
+                shader.input_order.push_back(u8(Read<u16>(data, table + i * 2) - 0x0f));
+            }
+        }
+        if (kind == 1) {
+            AddAttributes(shader, data, footer, w);
+        }
+        out.shaders.push_back(std::move(shader));
+    }
+
+    ShaderScan out;
+
+private:
+    void AddAttributes(ScannedShader& shader, std::string_view data, size_t footer,
+                       const std::array<u32, 60>& w) {
+        const u32 count = w[11] & 0xff;
+        bool found = false;
+        for (u32 k = 12; count != 0 && k < 50 && !found; ++k) {
+            found = true;
+            for (u32 i = 0; i < count && found; ++i) {
+                const u32 entry = k + i < w.size() ? w[k + i] : 0;
+                const u32 size = (entry >> 16) & 0xff;
+                found = ((entry >> 8) & 0xff) == 4 + 4 * i && size > 0 && size <= 4 &&
+                        (entry >> 24) == 0;
+            }
+        }
+        if (!found) {
+            return;
+        }
+        std::vector<u8> plain(count), named(count), texcoord_float(count);
+        if (!shader.executable) {
+            const auto semantics = InputSemantics(data, footer);
+            if (semantics.size() == count) {
+                for (u32 i = 0; i < count; ++i) {
+                    named[i] = SemanticClass(semantics[i]);
+                    texcoord_float[i] = semantics[i] == "TEXCOORD" ? 0 : named[i];
+                }
+            }
+        }
+        shader.attribute_classes.push_back(named);
+        if (texcoord_float != named) {
+            shader.attribute_classes.push_back(texcoord_float);
+        }
+        if (plain != named && plain != texcoord_float) {
+            shader.attribute_classes.push_back(plain);
+        }
+    }
+
+    std::unordered_set<u64> seen;
+};
+
+} // namespace
+
+ShaderScan ScanGameShaders(const std::filesystem::path& game_dir) {
+    Scanner scanner;
+    std::vector<std::filesystem::path> bundles;
+    std::error_code error;
+    for (const auto& entry :
+         std::filesystem::directory_iterator(game_dir / "dvdroot_ps4" / "shader", error)) {
+        if (entry.path().string().ends_with(".shaderbnd.dcx")) {
+            bundles.push_back(entry.path());
+        }
+    }
+    std::sort(bundles.begin(), bundles.end());
+    for (const auto& path : bundles) {
+        const Bytes bundle = Decompress(ReadFile(path));
+        const std::string_view view{reinterpret_cast<const char*>(bundle.data()), bundle.size()};
+        if (view.size() < 0x40) {
+            continue;
+        }
+        const u32 files = Read<u32>(view, 0xc);
+        for (u32 i = 0; i < files; ++i) {
+            const size_t record = 0x40 + size_t(i) * 0x24;
+            const auto size = Read<u64>(view, record + 8);
+            const auto offset = Read<u32>(view, record + 24);
+            if (offset + size > view.size()) {
+                continue;
+            }
+            const auto file = view.substr(offset, size);
+            const size_t footer = file.find("OrbShdr");
+            const size_t header = file.find("Shdr");
+            if (footer != file.npos && header < footer) {
+                scanner.Add(file, header, footer, false);
+            }
+        }
+    }
+    const Bytes executable = ReadFile(game_dir / "eboot.bin");
+    const std::string_view view{reinterpret_cast<const char*>(executable.data()), executable.size()};
+    std::vector<size_t> headers, footers;
+    for (size_t at = view.find("Shdr"); at != view.npos; at = view.find("Shdr", at + 1)) {
+        (at >= 3 && view.substr(at - 3, 3) == "Orb" ? footers : headers)
+            .push_back(at >= 3 && view.substr(at - 3, 3) == "Orb" ? at - 3 : at);
+    }
+    for (const size_t header : headers) {
+        const auto footer = std::upper_bound(footers.begin(), footers.end(), header);
+        if (footer != footers.end()) {
+            scanner.Add(view, header, *footer, true);
+        }
+    }
+    return std::move(scanner.out);
+}
+
+} // namespace Vulkan

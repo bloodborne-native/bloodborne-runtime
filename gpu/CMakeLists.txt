@@ -393,6 +393,8 @@ if (BB_FSR)
     target_link_libraries(bbgpu PRIVATE ffx-vulkan::portable ffx-vulkan::fsr4-v07-vulkan)
 endif()
 target_compile_definitions(bbgpu PRIVATE BB_FSR=$<BOOL:${BB_FSR}>)
+find_package(ZLIB REQUIRED) # the game's shader bundles (vk_shader_scan.cpp)
+target_link_libraries(bbgpu PRIVATE ZLIB::ZLIB)
 target_link_libraries(bbgpu PUBLIC Vulkan::Headers fmt::fmt Boost::headers magic_enum::magic_enum
     tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::FFMPEG miniz::miniz Zydis::Zydis sirit)
 if (NOT APPLE)

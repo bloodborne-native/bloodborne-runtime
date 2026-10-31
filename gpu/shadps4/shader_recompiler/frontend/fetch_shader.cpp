@@ -54,6 +54,10 @@ std::optional<FetchShaderData> ParseFetchShader(const Shader::Info& info) {
         return std::nullopt;
     }
 
+    if (info.fetch_override) {
+        return *info.fetch_override;
+    }
+
     const auto* code = GetFetchShaderCode(info, info.fetch_shader_sgpr_base);
 
     // bbport: the pipeline cache parses the fetch shader on every draw. Results are cached
