@@ -540,6 +540,16 @@ exports and a pixel shader reads keeps every real pair (113 of 113) but allows 6
 The executable's 5,498 programs are three groups: 5,139 in a post-effects library of permutations
 (45 used in that run), 338 for the interface (31 used) and 16 mostly compute (23 variants used).
 
+Every real pair stays inside one source: one shader bundle, the post-effects library or the
+interface library. Of the library's programs, 2,644 name an HDR encoding that run never used and
+are left out. Pairing a pixel shader with the vertex shaders of its own source that export exactly
+what it reads gives 14,030 fixed-pass pairs: 8,464 post effects, 4,127 interface, 1,436 in the
+bundles, 3 others. With the 7,959 model pairs that is 21,989, which hold 187 of the 212 real
+pipelines (85 model, 102 fixed). 11 more read fewer outputs than their vertex shader exports, and
+allowing that takes the fixed pairs to 77,137, so they stay at first use; so do 9 depth-only
+pipelines and 5 with geometry or tessellation stages. The exact pairs are an upper bound, not the
+engine's rules, and no pipeline has been built from them yet.
+
 **Progress for the player.** Cache entries are named by program hash and permutation, so the step
 can list what is compiled, skip it, and show compiled of total; what play compiled counts.
 
