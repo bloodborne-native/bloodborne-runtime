@@ -552,9 +552,10 @@ engine's rules, and no pipeline has been built from them yet.
 
 **What a step must fill: Metal's cache.** A first play with our cache empty and Metal's system cache
 warm stalls for 1.7 s with a worst frame of 0.73 s, against 10.9 s and 3.7 s truly cold, and 0.6 s
-and 0.23 s with both warm. So nearly all of a first play's stalls are Metal compiling, and a step
-only has to run each shader and pipeline through Metal once: it does not have to write our cache
-or match our keys. Nothing is known yet about how long Metal keeps that much in its cache.
+and 0.23 s with both warm. So most of a first play's stall time is Metal compiling, and running each shader and pipeline
+through Metal once removes it. That is not enough to play without hitches: on a first play the game
+still translates, converts and creates every object it needs, and whatever is new hitches (see
+"What a first play still does"). The step has to write our cache as well, as decided on 10-30.
 
 A prototype did that for one session, truly cold: it translated the session's programs from the
 game's files with up to five candidates, then built the session's pipelines through Metal with the
@@ -598,8 +599,21 @@ pipelines took 174 s on one thread and Metal's cache ended at 392 MB. 66,744 gen
 leave 5,450 pairs with no known state. A first play on that cache stalled for 4.9 s with a worst
 frame of 0.86 s, Metal's pipeline work 1.1 s against 3.7 s (one run). One run on that cache stopped
 on a stale descriptor (data format 15), unrelated to this work; Wooloomooloo2's safe read
-(`UPSTREAM.md`) addresses that class. A progress bar over the build ran in the prototype; it was
-not checked on screen.
+(`UPSTREAM.md`) addresses that class. A progress bar over the build drew correctly in the prototype;
+its shader total grew as shaders were found, so a real step needs the total first.
+
+**What a first play still does.** Charged R2 in the plain game made 34 new variants, 9 frames over
+100 ms and a worst of 425 ms; on the same cache a second time 2 variants and none over 100 ms. Of
+309 variants a first play made with the whole list translated beforehand, 270 were already there:
+the game had no way to find them. A lookup by what the output depends on, read without translating
+(image kinds, formatted buffers, vertex attributes, output maps, pixel inputs and export formats),
+found 323 of 405 with none wrong; the vertex output map has to be part of it, since clip distances
+come from a draw register and only appear with some draws. The other 39 of the 309: vertex 19,
+compute 10, tessellation 6, pixel 4. Translating is about 1 ms a shader; converting to Metal and
+creating libraries and pipelines is the cost. Keeping the compiled store from the compile run took
+library time from 2.2 s to 0.8 s. Loading a Metal binary archive of all the pipelines stops the
+game for over a minute on one thread before anything is drawn, so that archive cannot simply hold
+everything. Without an archive, pipelines are made in play (42.6 FPS in that run).
 
 **Progress for the player.** Cache entries are named by program hash and permutation, so the step
 can list what is compiled, skip it, and show compiled of total; what play compiled counts.

@@ -41,7 +41,14 @@
 #include "bbport_settings.h"
 #include "game_profile.h"
 #include "bbport_toggles.h"
+#include "video_core/renderer_vulkan/vk_metal_shadow.h"
 
+extern thread_local sigjmp_buf* bb_assert_recover;
+
+#include "video_core/renderer_vulkan/vk_presenter.h"
+extern std::atomic<unsigned> bb_list_shaders_done, bb_list_shaders_total, bb_list_pipelines_done,
+    bb_list_pipelines_total;
+extern std::unique_ptr<Vulkan::Presenter> presenter;
 namespace Vulkan {
 
 namespace {
@@ -575,6 +582,22 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
     if (is_new) {
         const auto pipeline_hash = std::hash<GraphicsPipelineKey>{}(sel.graphics_key);
         LOG_INFO(Render_Vulkan, "Compiling graphics pipeline {:#x}", pipeline_hash);
+        if (std::getenv("BB_PIPE_RECORD") && sel.infos[3] && !sel.infos[1] && !sel.infos[2]) {
+            // Local experiment: a pipeline's whole state, for a replay before play.
+            static FILE* record = std::fopen("out/pipeline-record.bin", "wb");
+            const u64 vs = sel.infos[3]->pgm_hash;
+            const u64 fs = sel.infos[0] ? sel.infos[0]->pgm_hash : 0;
+            const u32 count = sel.fetch_shader ? u32(sel.fetch_shader->attributes.size()) : 0;
+            std::fwrite(&vs, 8, 1, record);
+            std::fwrite(&fs, 8, 1, record);
+            std::fwrite(&sel.graphics_key, sizeof(sel.graphics_key), 1, record);
+            std::fwrite(&count, 4, 1, record);
+            for (u32 i = 0; i < count; ++i) {
+                const u32 location = sel.fetch_shader->attributes[i].semantic;
+                std::fwrite(&location, 4, 1, record);
+            }
+            std::fflush(record);
+        }
         CompileTimer timer;
 
         GraphicsPipeline::SerializationSupport sdata{};
@@ -1292,9 +1315,930 @@ static void LogVariant(u64 pgm_hash, Shader::HwStage stage, size_t perm_idx, dou
         part(spec.images != first->images, "images");
         part(spec.samplers != first->samplers, "samplers");
     }
+    {
+        // Local experiment: the whole key of a variant, for comparison with a list from the files.
+        std::string d = fmt::format("{{\"hash\":\"{:016x}\",\"stage\":{},\"perm\":{},\"start\":[{},{},{}]",
+                                    pgm_hash, static_cast<unsigned>(stage), perm_idx, spec.start.unified,
+                                    spec.start.buffer, spec.start.user_data);
+        const auto& rt = spec.runtime_info;
+        d += ",\"attribs\":[";
+        for (const auto& a : spec.vs_attribs) {
+            d += fmt::format("[{},{}],", static_cast<u32>(a.num_class), a.divisor);
+        }
+        d += "],\"fetch\":[";
+        if (spec.fetch_shader_data) {
+            for (const auto& a : spec.fetch_shader_data->attributes) {
+                d += fmt::format("[{},{},{},{}],", a.semantic, a.dest_vgpr, a.num_elements, a.instance_data);
+            }
+        }
+        d += "],\"buffers\":[";
+        for (const auto& s : spec.buffers) {
+            d += fmt::format("[{},{},{},{}],", u32(s.stride), u32(s.is_formatted), u32(s.data_format), u32(s.num_format));
+        }
+        d += "],\"images\":[";
+        for (const auto& s : spec.images) {
+            d += fmt::format("[{},{},{},{},{},{}],", static_cast<u32>(s.type), int(s.is_integer), int(s.is_storage),
+                             int(s.is_cube), int(s.is_srgb), s.num_bindings);
+        }
+        d += "],\"samplers\":[";
+        for (const auto& s : spec.samplers) {
+            d += fmt::format("[{},{}],", u32(s.force_unnormalized), u32(s.force_degamma));
+        }
+        d += "]";
+        if (stage == Shader::HwStage::Fragment) {
+            d += fmt::format(",\"fs\":{{\"n\":{},\"samples\":{},\"mrtz\":{},\"dual\":{},\"motion\":{},\"colours\":[",
+                             rt.hw.fs.num_inputs, rt.hw.fs.num_samples, rt.hw.fs.mrtz_mask,
+                             int(rt.hw.fs.dual_source_blending), int(rt.hw.fs.motion_vectors));
+            for (const auto& c : rt.hw.fs.color_buffers) {
+                d += fmt::format("[{},{},{},{},{},{},{},{}],", static_cast<u32>(c.data_format),
+                                 static_cast<u32>(c.num_format), static_cast<u32>(c.export_format),
+                                 static_cast<u32>(c.swizzle.r), static_cast<u32>(c.swizzle.g),
+                                 static_cast<u32>(c.swizzle.b), static_cast<u32>(c.swizzle.a),
+                                 static_cast<u32>(c.num_conversion));
+            }
+            d += "],\"inputs\":[";
+            for (u32 i = 0; i < rt.hw.fs.num_inputs; ++i) {
+                const auto& in = rt.hw.fs.inputs[i];
+                d += fmt::format("[{},{},{}],", in.param_index, int(in.is_default), int(in.is_flat));
+            }
+            d += "]}";
+        }
+        if (stage == Shader::HwStage::Vertex) {
+            d += fmt::format(",\"vs\":{{\"n\":{},\"motion\":{},\"clip\":{},\"tess\":{}}}", rt.hw.vs.num_outputs,
+                             int(rt.hw.vs.motion_vectors), rt.hw.vs.user_clip_plane_mask,
+                             int(rt.sw.vs.tess_emulated_primitive));
+        }
+        d += "}";
+        std::printf("Variant key: %s\n", d.c_str());
+    }
     std::printf("Shader variant: %016llx stage %u variant %zu, %.1f ms; %s\n",
                 static_cast<unsigned long long>(pgm_hash), static_cast<unsigned>(stage), perm_idx, ms,
                 what.c_str());
+}
+
+// Local experiment (BB_SHADER_LIST=1): the list's programs translated from the game's files before
+// play; every real variant is then looked up by its SPIR-V.
+static std::unordered_set<u64> list_spirv;
+static std::unordered_map<u64, std::vector<u32>> list_candidates;
+static u32 list_candidate = 0;
+static std::array<u32, 4> list_format{};
+static u32 list_image = 0;
+static std::unordered_map<u64, std::vector<VideoCore::Backend::ShaderHandle>> list_modules;
+
+void PipelineCache::ListHit(const Shader::Info& info, const std::vector<u32>& spv,
+                            const Shader::RuntimeInfo& rt) {
+    static u32 total[8]{};
+    static u32 hits[8]{};
+    if (!std::getenv("BB_SHADER_LIST")) {
+        return;
+    }
+    const u32 stage = static_cast<u32>(info.hw_stage) & 7;
+    if (info.pgm_hash == 0xae894a3aULL) {
+        FILE* out = std::fopen("out/spv-real.spv", "wb");
+        std::fwrite(spv.data(), 4, spv.size(), out);
+        std::fclose(out);
+    }
+    ++total[stage];
+    const bool hit = list_spirv.contains(XXH3_64bits(spv.data(), spv.size() * 4));
+    hits[stage] += hit;
+    if (!hit) {
+        std::printf("List miss: %016llx stage %u\n", static_cast<unsigned long long>(info.pgm_hash), stage);
+    }
+    if (info.hw_stage == HwStage::Compute) {
+        std::string line = fmt::format("{} {:x} ", int(hit), info.pgm_hash);
+        for (const auto& d : info.buffers) {
+            const auto s = d.GetSharp(info);
+            line += fmt::format("B{}:{}:{}:{}{}{}{}:{},", u32(s.stride), u32(s.data_format), u32(s.num_format), u32(s.dst_sel_x),
+                                u32(s.dst_sel_y), u32(s.dst_sel_z), u32(s.dst_sel_w), int(d.is_formatted));
+        }
+        for (const auto& d : info.images) {
+            const auto s = d.GetSharp(info);
+            line += fmt::format("I{}:{}:{}:{}{}{}{}:{},", u32(s.type), u32(s.data_format), u32(s.num_format), u32(s.dst_sel_x),
+                                u32(s.dst_sel_y), u32(s.dst_sel_z), u32(s.dst_sel_w), int(d.is_written));
+        }
+        std::printf("Cs real: %s\n", line.c_str());
+        const auto& cs = rt.hw.cs;
+        std::printf("Cs key: %llx %u %u %u %u %u %u %u %u %u %u %u %u %u\n", static_cast<unsigned long long>(info.pgm_hash),
+                    cs.workgroup_size[0], cs.workgroup_size[1], cs.workgroup_size[2], u32(cs.tgid_enable[0]),
+                    u32(cs.tgid_enable[1]), u32(cs.tgid_enable[2]), cs.shared_memory_size, rt.props.num_user_data,
+                    rt.props.num_allocated_vgprs, u32(rt.props.fp_denorm_mode32), u32(rt.props.fp_denorm_mode16_64),
+                    u32(rt.props.fp_round_mode32), u32(rt.props.fp_round_mode16_64));
+    }
+    if (info.hw_stage == HwStage::Fragment) {
+        const auto& fs = rt.hw.fs;
+        std::string line = fmt::format("{} {:x} {} {} {} {} {} {} {} {} {} ", int(hit), info.pgm_hash, u32(fs.z_export_format),
+                                       fs.num_samples, fs.mrtz_mask, int(fs.front_face_all_bits), int(fs.dual_source_blending),
+                                       int(fs.clip_distance_emulation), int(fs.motion_vectors), rt.props.num_input_vgprs,
+                                       u32(rt.props.fp_denorm_mode32));
+        for (const auto& c : fs.color_buffers) {
+            line += fmt::format("{}:{}:{}:{}:{},", u32(c.data_format), u32(c.num_format), u32(c.num_conversion), u32(c.export_format), u32(c.blend_self_scale));
+        }
+        std::printf("Fs key: %s\n", line.c_str());
+    }
+    if (const auto real = Shader::Gcn::ParseFetchShader(info); real) {
+        {
+            const auto& vs = rt.hw.vs;
+            std::string line = fmt::format("{} {:x} {} {} {} {} {} {} {} {} ", int(hit), info.pgm_hash,
+                                           rt.props.num_user_data, rt.props.num_input_vgprs, vs.num_outputs,
+                                           vs.user_clip_plane_mask, int(vs.clip_disable), int(vs.motion_vectors),
+                                           rt.sw.vs.vertex_sgpr_offset, int(rt.sw.vs.tess_emulated_primitive));
+            for (const auto& a : real->attributes) {
+                const auto b = info.ReadUdReg<AmdGpu::Buffer>(a.sgpr_base, a.dword_offset);
+                line += fmt::format("{}:{}:{}:{}:{}:{},", u32(b.data_format), u32(b.num_format), u32(b.dst_sel_x), u32(b.dst_sel_y),
+                                    u32(b.dst_sel_z), u32(b.dst_sel_w));
+            }
+            std::printf("Vs key: %s\n", line.c_str());
+        }
+        std::string line = fmt::format("{} {} {} ", int(hit), int(real->vertex_offset_sgpr),
+                                       int(real->instance_offset_sgpr));
+        for (const auto& a : real->attributes) {
+            line += fmt::format("{}:{}:{}:{}:{}:{}:{},", a.sgpr_base, a.dword_offset, a.instance_data, a.inst_offset,
+                                a.data_format, a.num_format, a.num_elements);
+        }
+        std::printf("Fetch key: %016llx %s\n", static_cast<unsigned long long>(info.pgm_hash), line.c_str());
+    }
+    std::printf("Shader list hits:");
+    for (u32 s = 0; s < 8; ++s) {
+        if (total[s]) {
+            std::printf(" %u:%u/%u", s, hits[s], total[s]);
+        }
+    }
+    std::printf("\n");
+}
+
+__attribute__((noinline)) int PipelineCache::ListTranslate(HwStage hw, SwStage sw,
+                                                           const Shader::ShaderParams& params,
+                                                           Shader::RuntimeInfo& rt,
+                                                           std::span<const u32> code,
+                                                           const Shader::Gcn::FetchShaderData* fetch,
+                                                           const AmdGpu::Buffer* attribs) {
+    static std::vector<u32> flat(256);
+    static sigjmp_buf recover;
+    if (const int why = sigsetjmp(recover, 1); why != 0) {
+        runtime_fault_recover = nullptr;
+        bb_assert_recover = nullptr;
+        return why == 2 ? 2 : 1;
+    }
+    runtime_fault_recover = &recover;
+    bb_assert_recover = &recover;
+    Shader::Info guess{hw, sw, params};
+    guess.list_mode = true;
+    guess.flat_override = &flat;
+    guess.fetch_override = fetch;
+    guess.attrib_override = attribs;
+    guess.list_stride = list_format[0];
+    guess.list_data_format = list_format[1];
+    guess.list_num_format = list_format[2];
+    guess.list_image_type = list_image;
+    guess.list_swizzle = list_format[3];
+    Shader::Backend::Bindings next{};
+    if (sw != SwStage::Compute) {
+        next.EnterStage(u32(sw));
+    }
+    try {
+        const auto ir = Shader::TranslateProgram(code, ahead_pools, guess, rt, profile);
+        const auto spv = Shader::Backend::SPIRV::EmitSPIRV(profile, rt, ir, next);
+        if (params.hash == 0xae894a3aULL) {
+            static int dump = 0;
+            FILE* out = std::fopen(fmt::format("out/spv-list-{}.spv", dump++).c_str(), "wb");
+            std::fwrite(spv.data(), 4, spv.size(), out);
+            std::fclose(out);
+        }
+        if (list_spirv.insert(XXH3_64bits(spv.data(), spv.size() * 4)).second &&
+            std::getenv("BB_SHADER_LIST_COMPILE")) {
+            ++bb_list_shaders_total;
+            list_modules[params.hash].push_back(MakeShader(spv, GetShaderName(hw, params.hash, 0)));
+            if (hw == HwStage::Compute) {
+                static u64 fake = 0x8000000;
+                MetalShadow::Compute(ComputePipelineKey{size_t(fake)}, NativeModule(list_modules[params.hash].back()),
+                                     vk::Pipeline{reinterpret_cast<VkPipeline>(fake += 16)});
+            }
+            list_candidates[params.hash].push_back(list_candidate);
+        }
+    } catch (const std::exception& e) {
+        runtime_fault_recover = nullptr;
+        bb_assert_recover = nullptr;
+        static int shown = 0;
+        if (shown++ < 5) {
+            std::printf("List exception: %llx %s\n", static_cast<unsigned long long>(params.hash), e.what());
+        }
+        return 3;
+    }
+    runtime_fault_recover = nullptr;
+    bb_assert_recover = nullptr;
+    return 0;
+}
+
+// The build runs on a thread of its own; this thread presents blank frames, so the overlay's bar
+// keeps moving.
+void PipelineCache::ListBuild() {
+    static bool started = false;
+    if (started || !std::getenv("BB_SHADER_LIST")) {
+        return;
+    }
+    started = true;
+    static std::atomic<bool> finished{false};
+    static PipelineCache* self;
+    self = this;
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, 16 * 1024 * 1024);
+    pthread_t thread;
+    pthread_create(&thread, &attr, [](void*) -> void* {
+        self->ListBuildWork();
+        finished.store(true);
+        return nullptr;
+    }, nullptr);
+    while (!finished.load()) {
+        presenter->Present(presenter->PrepareBlankFrame(false), false, false);
+        std::this_thread::sleep_for(std::chrono::milliseconds(33));
+    }
+    pthread_join(thread, nullptr);
+    bb_list_shaders_total.store(0);
+}
+
+void PipelineCache::ListBuildWork() {
+    static std::vector<u32> blob;
+    {
+        std::ifstream file("out/shader-code.bin", std::ios::binary | std::ios::ate);
+        blob.resize(size_t(file.tellg()) / 4);
+        file.seekg(0);
+        file.read(reinterpret_cast<char*>(blob.data()), blob.size() * 4);
+    }
+    static std::array<u32, Shader::ShaderParams::NumShaderUserData> zero_ud{};
+    const auto start_time = std::chrono::steady_clock::now();
+    u32 programs = 0, translations = 0, faults = 0, asserts = 0, exceptions = 0;
+    u32 skipped_kind[2]{};
+    const auto split = [](const std::string& text) {
+        std::vector<std::pair<int, int>> out;
+        if (text == "-") {
+            return out;
+        }
+        std::istringstream items(text);
+        std::string item;
+        while (std::getline(items, item, ',')) {
+            const auto colon = item.find(':');
+            out.emplace_back(std::stoi(item.substr(0, colon)),
+                             colon == std::string::npos ? 0 : std::stoi(item.substr(colon + 1)));
+        }
+        return out;
+    };
+    // The translator can spin on code it was not meant to see: a stuck program is interrupted and
+    // skipped through the fault path.
+    static std::atomic<u64> watch_ticket{0};
+    static std::atomic<bool> watch_stop{false};
+    static std::atomic<u32> timeouts{0};
+    const pthread_t target = pthread_self();
+    std::thread watchdog([target] {
+        u64 seen = 0;
+        int ticks = 0;
+        while (!watch_stop.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            const u64 now = watch_ticket.load();
+            ticks = now == seen ? ticks + 1 : 0;
+            seen = now;
+            if (ticks >= 20) {
+                ticks = 0;
+                timeouts.fetch_add(1);
+                pthread_kill(target, SIGSEGV);
+            }
+        }
+    });
+    std::ifstream list_file("out/shader-list2.txt");
+    std::string line;
+    while (std::getline(list_file, line)) {
+        std::istringstream in(line);
+        u64 hash;
+        u32 kind, rsrc1, rsrc2, z_format, col, en, addr, inputs, exe;
+        size_t offset, length;
+        std::string order, a, b, c, d;
+        in >> std::hex >> hash >> std::dec >> kind >> std::hex >> rsrc1 >> rsrc2 >> z_format >> col >> en >> addr >>
+            std::dec >> inputs >> exe >> offset >> length >> order >> a >> b >> c >> d;
+        if (kind == 4) {
+            // Compute: every register is in the header; the formats are tried.
+            static const std::array<std::array<u32, 4>, 16> formats{{{4, 10, 0, 0x4567}, {4, 10, 0, 0x6547},
+                {4, 10, 4, 0x4567}, {4, 10, 9, 0x6547}, {4, 4, 7, 0x4001}, {4, 4, 4, 0x4000}, {4, 5, 7, 0x4501},
+                {4, 5, 0, 0x4501}, {4, 6, 7, 0x4561}, {8, 11, 7, 0x4501}, {8, 12, 7, 0x4567}, {16, 14, 7, 0x4567},
+                {16, 14, 4, 0x4567}, {12, 13, 4, 0x4560}, {1, 1, 0, 0x4001}, {1, 1, 0, 0x0004}}};
+            static const std::array<u32, 5> images{9, 13, 10, 8, 12};
+            const std::span<const u32> code{blob.data() + offset / 4, length / 4};
+            ++programs;
+            for (const auto& format : formats) {
+                for (const u32 image : images) {
+                    ++translations;
+                    Shader::RuntimeInfo rt{};
+                    rt.Initialize(HwStage::Compute, SwStage::Compute);
+                    rt.props.num_user_data = (rsrc2 >> 1) & 0x1f;
+                    rt.props.num_allocated_vgprs = (rsrc1 & 0x3f) * 4;
+                    rt.props.fp_round_mode32 = AmdGpu::FpRoundMode((rsrc1 >> 12) & 3);
+                    rt.props.fp_round_mode16_64 = AmdGpu::FpRoundMode((rsrc1 >> 14) & 3);
+                    rt.props.fp_denorm_mode32 = AmdGpu::FpDenormMode((rsrc1 >> 16) & 3);
+                    rt.props.fp_denorm_mode16_64 = AmdGpu::FpDenormMode((rsrc1 >> 18) & 3);
+                    rt.hw.cs.workgroup_size = {z_format, col, en};
+                    rt.hw.cs.tgid_enable = {bool(rsrc2 >> 7 & 1), bool(rsrc2 >> 8 & 1), bool(rsrc2 >> 9 & 1)};
+                    const Shader::ShaderParams params{
+                        .user_data = std::span<const u32, Shader::ShaderParams::NumShaderUserData>{
+                            zero_ud.data(), Shader::ShaderParams::NumShaderUserData},
+                        .code = code,
+                        .hash = hash,
+                    };
+                    list_format = format;
+                    list_image = image;
+                    watch_ticket.fetch_add(1);
+                    const int why = ListTranslate(HwStage::Compute, SwStage::Compute, params, rt, code, nullptr, nullptr);
+                    list_format = {};
+                    list_image = 0;
+                    if (why != 0) {
+                        ++(why == 2 ? asserts : why == 3 ? exceptions : faults);
+                    }
+                }
+            }
+            continue;
+        }
+        const bool fragment = kind == 2;
+        const auto hw = fragment ? HwStage::Fragment : HwStage::Vertex;
+        const auto sw = fragment ? SwStage::Fragment : SwStage::Vertex;
+        const std::span<const u32> code{blob.data() + offset / 4, length / 4};
+        const auto input_order = split(order);
+        const std::array attribute_sets{split(a), split(b), split(c), split(d)};
+        const u32 candidates = fragment ? (col != 0 ? 5 : 1) : 4;
+        ++programs;
+        for (u32 candidate = 0; candidate < candidates; ++candidate) {
+            ++translations;
+            const bool front_face = fragment && (z_format >> 8 & 1) != 0;
+            const u32 colour_candidate = candidate;
+            Shader::RuntimeInfo rt{};
+            rt.Initialize(hw, sw);
+            rt.props.num_user_data = (rsrc2 >> 1) & 0x1f;
+            rt.props.num_allocated_vgprs = ((rsrc1 & 0x3f) + 1) * 4;
+            rt.props.fp_round_mode32 = AmdGpu::FpRoundMode((rsrc1 >> 12) & 3);
+            rt.props.fp_round_mode16_64 = AmdGpu::FpRoundMode((rsrc1 >> 14) & 3);
+            rt.props.fp_denorm_mode32 = AmdGpu::FpDenormMode((rsrc1 >> 16) & 3);
+            rt.props.fp_denorm_mode16_64 = AmdGpu::FpDenormMode((rsrc1 >> 18) & 3);
+            std::optional<Shader::Gcn::FetchShaderData> fetch;
+            std::vector<AmdGpu::Buffer> attribs(256);
+            if (fragment) {
+                std::memcpy(&rt.hw.fs.en_flags, &en, sizeof(en));
+                std::memcpy(&rt.hw.fs.addr_flags, &addr, sizeof(addr));
+                rt.hw.fs.num_inputs = inputs;
+                rt.hw.fs.z_export_format = static_cast<AmdGpu::ShaderExportFormat>(z_format & 0xff);
+                for (size_t i = 0; i < input_order.size(); ++i) {
+                    rt.hw.fs.inputs[i].param_index = u8(input_order[i].first);
+                }
+                rt.hw.fs.front_face_all_bits = front_face;
+                for (u32 i = 0; colour_candidate != 1 && i < Shader::MaxColorBuffers; ++i) {
+                    const u32 format = (col >> (4 * i)) & 0xf;
+                    if (format != 0) {
+                        auto& colour = rt.hw.fs.color_buffers[i];
+                        colour.data_format = AmdGpu::DataFormat::Format8_8_8_8;
+                        colour.num_format = AmdGpu::NumberFormat::Unorm;
+                        colour.export_format = static_cast<AmdGpu::ShaderExportFormat>(format);
+                        colour.swizzle = AmdGpu::IdentityMapping;
+                        if (colour_candidate == 2) { // one 8-bit target in blue-first order
+                            std::swap(colour.swizzle.r, colour.swizzle.b);
+                        }
+                        if (colour_candidate == 3) { // the G-buffer's targets
+                            if (i == 2) {
+                                colour.num_format = AmdGpu::NumberFormat::Srgb;
+                            }
+                            if (i == 4) {
+                                colour.data_format = AmdGpu::DataFormat::Format10_11_11;
+                                colour.num_format = AmdGpu::NumberFormat::Float;
+                                colour.swizzle.a = AmdGpu::CompSwizzle::Zero;
+                            }
+                            if (i >= 5) {
+                                colour.data_format = AmdGpu::DataFormat::Format16_16_16_16;
+                                colour.num_format = AmdGpu::NumberFormat::Float;
+                            }
+                        }
+                        if (colour_candidate == 4) { // 16-bit float targets
+                            colour.data_format = AmdGpu::DataFormat::Format16_16_16_16;
+                            colour.num_format = AmdGpu::NumberFormat::Float;
+                        }
+                    }
+                }
+            } else {
+                rt.props.num_input_vgprs = exe ? 0 : 3;
+                fetch.emplace();
+                u32 index = 0;
+                for (const auto [size, number] : attribute_sets[candidate]) {
+                    Shader::Gcn::VertexAttribute attrib{};
+                    attrib.semantic = u8(index);
+                    attrib.dest_vgpr = u8(4 + 4 * index);
+                    attrib.num_elements = 4;
+                    attrib.dword_offset = u8(index * 4);
+                    fetch->attributes.push_back(attrib);
+                    auto& v = attribs[attrib.dword_offset];
+                    v.base_address = 1;
+                    v.num_records = 1;
+                    v.data_format = u32(AmdGpu::DataFormat::Format32_32_32_32);
+                    v.num_format = u32(number == 2   ? AmdGpu::NumberFormat::Uint
+                                       : number == 1 ? AmdGpu::NumberFormat::Sint
+                                                     : AmdGpu::NumberFormat::Float);
+                    using S = AmdGpu::CompSwizzle;
+                    v.dst_sel_x = u32(S::Red);
+                    v.dst_sel_y = u32(size >= 2 ? S::Green : S::Zero);
+                    v.dst_sel_z = u32(size >= 3 ? S::Blue : S::Zero);
+                    v.dst_sel_w = u32(size >= 4 ? S::Alpha : number != 0 ? S::Zero : S::One);
+                    ++index;
+                }
+            }
+            const Shader::ShaderParams params{
+                .user_data = std::span<const u32, Shader::ShaderParams::NumShaderUserData>{
+                    zero_ud.data(), Shader::ShaderParams::NumShaderUserData},
+                .code = code,
+                .hash = hash,
+            };
+            {
+                static FILE* progress = std::fopen("out/list-progress.txt", "w");
+                std::fprintf(progress, "%llx %u %u\n", static_cast<unsigned long long>(hash), candidate, programs);
+                std::fflush(progress);
+            }
+            watch_ticket.fetch_add(1);
+            list_candidate = candidate;
+            const int why = ListTranslate(hw, sw, params, rt, code, fetch ? &*fetch : nullptr, attribs.data());
+            if (why != 0) {
+                ++(why == 2 ? asserts : why == 3 ? exceptions : faults);
+                skipped_kind[fragment] += candidate == 0;
+            }
+        }
+    }
+    watch_stop.store(true);
+    watchdog.join();
+    if (std::getenv("BB_PIPE_REPLAY")) {
+        {
+            std::ifstream count("out/pipeline-record.bin", std::ios::binary);
+            u32 entries = 0;
+            u64 skip[2];
+            std::vector<char> key(sizeof(GraphicsPipelineKey));
+            u32 attributes = 0;
+            while (count.read(reinterpret_cast<char*>(skip), 16)) {
+                count.read(key.data(), key.size());
+                count.read(reinterpret_cast<char*>(&attributes), 4);
+                count.seekg(attributes * 4, std::ios::cur);
+                ++entries;
+            }
+            bb_list_pipelines_total.store(entries);
+        }
+        std::ifstream record("out/pipeline-record.bin", std::ios::binary);
+        u32 built = 0, skipped = 0;
+        u64 fake = 0x7000000;
+        const auto replay_start = std::chrono::steady_clock::now();
+        for (;;) {
+            u64 vs = 0, fs = 0;
+            u32 count = 0;
+            auto key = std::make_unique<GraphicsPipelineKey>();
+            if (!record.read(reinterpret_cast<char*>(&vs), 8)) {
+                break;
+            }
+            record.read(reinterpret_cast<char*>(&fs), 8);
+            record.read(reinterpret_cast<char*>(key.get()), sizeof(*key));
+            ++bb_list_pipelines_done;
+            record.read(reinterpret_cast<char*>(&count), 4);
+            std::vector<MetalShadow::VertexInput> inputs(count);
+            for (auto& in : inputs) {
+                record.read(reinterpret_cast<char*>(&in.location), 4);
+            }
+            const auto vs_it = list_modules.find(vs);
+            const auto fs_it = list_modules.find(fs);
+            if (vs_it == list_modules.end() || (fs && fs_it == list_modules.end())) {
+                ++skipped;
+                continue;
+            }
+            size_t vertex_index = 0;
+            for (const auto vertex : vs_it->second) {
+                if (vertex_index++ > 0 && std::getenv("BB_PIPE_FIRST")) {
+                    break;
+                }
+                const size_t fragments = fs ? fs_it->second.size() : 1;
+                // A pixel shader's candidate follows from the state's colour targets.
+                u32 wanted = 0;
+                u32 targets = 0;
+                for (const auto& c : key->color_buffers) {
+                    targets += c.data_format != AmdGpu::DataFormat::FormatInvalid;
+                }
+                const auto& first = key->color_buffers[0];
+                if (targets == 0) {
+                    wanted = 1;
+                } else if (targets >= 6) {
+                    wanted = 3;
+                } else if (first.swizzle.r == AmdGpu::CompSwizzle::Blue) {
+                    wanted = 2;
+                } else if (first.data_format == AmdGpu::DataFormat::Format16_16_16_16) {
+                    wanted = 4;
+                }
+                for (size_t i = 0; i < fragments; ++i) {
+                    if (fs && fragments > 1 && list_candidates[fs][i] != wanted &&
+                        std::ranges::find(list_candidates[fs], wanted) != list_candidates[fs].end()) {
+                        continue;
+                    }
+                    std::array<vk::ShaderModule, MaxShaderStages> modules{};
+                    std::array<bool, MaxShaderStages> has{};
+                    modules[3] = NativeModule(vertex);
+                    has[3] = true;
+                    if (fs) {
+                        modules[0] = NativeModule(fs_it->second[i]);
+                        has[0] = true;
+                    }
+                    MetalShadow::Graphics(*key, modules, has, inputs, false,
+                                          vk::Pipeline{reinterpret_cast<VkPipeline>(fake += 16)});
+                    ++built;
+                }
+            }
+        }
+        std::fflush(stdout);
+        std::printf("Shader list pipelines: %u built, %u pipelines skipped, %.1f s\n", built, skipped,
+                    std::chrono::duration<double>(std::chrono::steady_clock::now() - replay_start).count());
+    }
+    if (const char* wait = std::getenv("BB_SHADER_LIST_COMPILE")) {
+        (void)wait;
+        unsigned last = 0;
+        int still = 0;
+        while (bb_list_shaders_done.load() < bb_list_shaders_total.load() && still < 100) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            const unsigned now = bb_list_shaders_done.load();
+            still = now == last ? still + 1 : 0;
+            last = now;
+        }
+        if (std::getenv("BB_SHADER_LIST_EXIT")) {
+            std::printf("Shader list: exiting before play\n");
+            std::fflush(stdout);
+            std::_Exit(0);
+        }
+    }
+    std::printf("Shader list timeouts: %u, exceptions: %u\n", timeouts.load(), exceptions);
+    std::printf("Shader list built: %u programs, %u translations, %zu modules, %u faults, %u asserts, "
+                "first candidates skipped vertex %u pixel %u, %.1f s\n", programs, translations, list_spirv.size(),
+                faults, asserts, skipped_kind[0], skipped_kind[1],
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - start_time).count());
+}
+
+// Local experiment (BB_SHADER_LIST_CHECK=1): would a translation fed only a list's descriptors,
+// with no user data and no game memory, produce this variant's SPIR-V?
+template <typename Sharp, typename Fetch>
+static void PutSharp(std::vector<u32>& flat, const Fetch& fetch, const Sharp& sharp) {
+    std::array<u32, sizeof(Sharp) / 4> dw;
+    std::memcpy(dw.data(), &sharp, sizeof(sharp));
+    for (u32 i = 0; i < dw.size(); ++i) {
+        if ((fetch.load_mask >> i & 1) && fetch.offsets[i] != Shader::UNKNOWN_LOCATION &&
+            fetch.offsets[i] < flat.size()) {
+            flat[fetch.offsets[i]] = dw[i];
+        }
+    }
+}
+
+static AmdGpu::Buffer CanonBuffer(AmdGpu::Buffer b, u32 level) {
+    AmdGpu::Buffer c = b;
+    if (level >= 1) {
+        c.base_address = 1;
+        c.num_records = 1;
+    }
+    if (level >= 2) {
+        c.cache_swizzle = 0;
+        c.add_tid_enable = 0;
+        c.mtype = 0;
+    }
+    if (level == 6) {
+        c.stride = 0;
+    }
+    if (level == 8 || level == 11) {
+        c.stride = 16;
+    }
+    return c;
+}
+
+static AmdGpu::Image CanonImage(AmdGpu::Image i, u32 level) {
+    AmdGpu::Image c = i;
+    if (level >= 1) {
+        c.base_address = 1;
+        c.width = 0;
+        c.height = 0;
+        c.pitch = 0;
+        c.min_lod = 0;
+        c.min_lod_warn = 0;
+    }
+    if (level >= 2) {
+        c.base_level = 0;
+        c.last_level = 0;
+        c.tiling_index = u64(AmdGpu::TileMode::Thin1DThin);
+        c.mtype = 0;
+        c.mtype2 = 0;
+        c.mtype_l2 = 0;
+        c.perf_modulation = 0;
+        c.pow2pad = 0;
+        c.atc = 0;
+    }
+    if (level == 3 && c.num_format == u64(AmdGpu::NumberFormat::Srgb)) {
+        c.num_format = u64(AmdGpu::NumberFormat::Unorm);
+    }
+    if (level == 4) {
+        c.dst_sel_x = u64(AmdGpu::CompSwizzle::Red);
+        c.dst_sel_y = u64(AmdGpu::CompSwizzle::Green);
+        c.dst_sel_z = u64(AmdGpu::CompSwizzle::Blue);
+        c.dst_sel_w = u64(AmdGpu::CompSwizzle::Alpha);
+    }
+    if (level == 5 && c.num_format != u64(AmdGpu::NumberFormat::Uint) &&
+        c.num_format != u64(AmdGpu::NumberFormat::Sint)) {
+        c.data_format = u64(AmdGpu::DataFormat::Format8_8_8_8);
+        c.num_format = u64(AmdGpu::NumberFormat::Unorm);
+    }
+    return c;
+}
+
+void PipelineCache::ListCheck(const Shader::Info& info, const Shader::RuntimeInfo& runtime_info,
+                              std::span<const u32> code, const Shader::Backend::Bindings& start,
+                              const std::vector<u32>& spv) {
+    static const bool on = [] {
+        const char* env = std::getenv("BB_SHADER_LIST_CHECK");
+        return env && env[0] == '1';
+    }();
+    if (!on || info.sw_stage == SwStage::TessellationControl ||
+        info.sw_stage == SwStage::TessellationEval) {
+        return;
+    }
+    static u32 total[8]{};
+    static u32 same[25][8]{};
+    static u32 failed = 0;
+    static std::array<u32, Shader::ShaderParams::NumShaderUserData> zero_ud{};
+    const u32 stage = static_cast<u32>(info.hw_stage) & 7;
+    const auto real_flat = info.FlatUserData();
+    const auto fetch = Shader::Gcn::ParseFetchShader(info);
+    static u32 list_missing = 0;
+    u64 cube_seen = 0;
+    u64 cube_real = 0;
+    const bool plain_stage = info.hw_stage == HwStage::Vertex || info.hw_stage == HwStage::Fragment ||
+                             info.hw_stage == HwStage::Compute;
+    const auto attempt = [&](u32 level) {
+        if (level >= 12 && !plain_stage) {
+            return false; // tessellation and geometry stay at first use
+        }
+        std::vector<u32> flat(real_flat.size());
+        if (level == 0) {
+            std::ranges::copy(real_flat, flat.begin());
+        }
+        std::vector<AmdGpu::Buffer> attribs(256);
+        for (const auto& desc : info.buffers) {
+            AmdGpu::Buffer raw{};
+            if (level && desc.sharp_fetch.Fetch(real_flat.data(), &raw)) {
+                PutSharp(flat, desc.sharp_fetch,
+                         CanonBuffer(raw, stage == 6 && level >= 8 ? 2 : level));
+            }
+        }
+        for (const auto& desc : info.images) {
+            AmdGpu::Image raw{};
+            if (level && desc.sharp_fetch.Fetch(real_flat.data(), &raw)) {
+                PutSharp(flat, desc.sharp_fetch, CanonImage(raw, level));
+            }
+        }
+        for (const auto& desc : info.samplers) {
+            AmdGpu::Sampler raw{};
+            if (level && desc.sharp_fetch.Fetch(real_flat.data(), &raw)) {
+                PutSharp(flat, desc.sharp_fetch, raw);
+            }
+        }
+        if (fetch) {
+            for (const auto& attrib : fetch->attributes) {
+                attribs[attrib.dword_offset] =
+                    CanonBuffer(info.ReadUdReg<AmdGpu::Buffer>(attrib.sgpr_base, attrib.dword_offset),
+                                level == 6 ? 2 : level);
+                if (level == 7) {
+                    attribs[attrib.dword_offset].data_format =
+                        u32(AmdGpu::DataFormat::Format32_32_32_32);
+                    attribs[attrib.dword_offset].num_format = u32(AmdGpu::NumberFormat::Float);
+                }
+                if (level == 9 || level == 11 || level >= 12) {
+                    auto& a = attribs[attrib.dword_offset];
+                    const auto number = AmdGpu::GetNumberClass(a.GetNumberFmt());
+                    a.data_format = u32(AmdGpu::DataFormat::Format32_32_32_32);
+                    a.num_format = u32(number == AmdGpu::NumberClass::Float
+                                           ? AmdGpu::NumberFormat::Float
+                                           : number == AmdGpu::NumberClass::Sint
+                                                 ? AmdGpu::NumberFormat::Sint
+                                                 : AmdGpu::NumberFormat::Uint);
+                }
+            }
+        }
+        const Shader::ShaderParams params{
+            .user_data = std::span<const u32, Shader::ShaderParams::NumShaderUserData>{
+                zero_ud.data(), Shader::ShaderParams::NumShaderUserData},
+            .code = code,
+            .hash = info.pgm_hash,
+        };
+        auto rt = runtime_info;
+        struct ListEntry {
+            u32 kind, user, vgprs, en, addr, inputs;
+            std::vector<int> order;
+            std::vector<std::pair<int, int>> attributes;
+        };
+        static const auto list = [] {
+            std::unordered_map<u64, ListEntry> out;
+            std::ifstream file("out/shader-list.txt");
+            std::string line;
+            while (std::getline(file, line)) {
+                std::istringstream in(line);
+                u64 hash;
+                ListEntry e{};
+                std::string order;
+                std::string attributes;
+                in >> std::hex >> hash >> std::dec >> e.kind >> e.user >> e.vgprs >> std::hex >> e.en >>
+                    e.addr >> std::dec >> e.inputs >> order >> attributes;
+                if (order == "-") {
+                    order.clear();
+                }
+                if (attributes != "-") {
+                    std::istringstream items(attributes);
+                    std::string item;
+                    while (std::getline(items, item, ',')) {
+                        const auto colon = item.find(':');
+                        e.attributes.emplace_back(std::stoi(item.substr(0, colon)),
+                                                  std::stoi(item.substr(colon + 1)));
+                    }
+                }
+                std::istringstream parts(order);
+                std::string part;
+                while (std::getline(parts, part, ',')) {
+                    e.order.push_back(std::stoi(part));
+                }
+                out.emplace(hash, e);
+            }
+            return out;
+        }();
+        if (level >= 19 && info.hw_stage != HwStage::Compute) {
+            const auto found = list.find(info.pgm_hash);
+            if (found != list.end()) {
+                const auto& e = found->second;
+                rt.props.num_user_data = e.user;
+                rt.props.num_allocated_vgprs = e.vgprs;
+                if (info.hw_stage == HwStage::Fragment) {
+                    std::memcpy(&rt.hw.fs.en_flags, &e.en, sizeof(e.en));
+                    std::memcpy(&rt.hw.fs.addr_flags, &e.addr, sizeof(e.addr));
+                    rt.hw.fs.num_inputs = e.inputs;
+                    for (u32 i = 0; i < e.order.size() && i < rt.hw.fs.inputs.size(); ++i) {
+                        rt.hw.fs.inputs[i].param_index = u8(e.order[i]);
+                    }
+                }
+            } else {
+                ++list_missing;
+            }
+            if (level == 20 || level == 21) {
+                rt.props.num_input_vgprs = 0;
+            }
+            if (level == 21 && info.hw_stage == HwStage::Vertex) {
+                rt.hw.vs.num_outputs = 0;
+                rt.hw.vs.outputs = {};
+            }
+        }
+        if (info.hw_stage == HwStage::Fragment && level >= 14) {
+            if (level == 14 || level == 18) { // colour: only each target's number class
+                for (auto& colour : rt.hw.fs.color_buffers) {
+                    if (colour.data_format != AmdGpu::DataFormat::FormatInvalid) {
+                        const auto number = AmdGpu::GetNumberClass(colour.num_format);
+                        colour.data_format = AmdGpu::DataFormat::Format8_8_8_8;
+                        colour.num_format = number == AmdGpu::NumberClass::Float
+                                                ? AmdGpu::NumberFormat::Unorm
+                                                : number == AmdGpu::NumberClass::Sint
+                                                      ? AmdGpu::NumberFormat::Sint
+                                                      : AmdGpu::NumberFormat::Uint;
+                        colour.num_conversion = AmdGpu::NumberConversion::None;
+                    }
+                }
+            }
+            if (level == 15) { // colour: also a plain swizzle
+                for (auto& colour : rt.hw.fs.color_buffers) {
+                    colour.swizzle = AmdGpu::IdentityMapping;
+                }
+            }
+            if (level == 16 || level == 18) { // inputs: only flat and default kept, plain order
+                for (u32 i = 0; i < rt.hw.fs.num_inputs; ++i) {
+                    rt.hw.fs.inputs[i].param_index = u8(i);
+                }
+            }
+            if (level == 17) { // inputs dropped: does the order reach the SPIR-V at all?
+                for (u32 i = 0; i < rt.hw.fs.num_inputs; ++i) {
+                    rt.hw.fs.inputs[i].param_index = u8(i + 1);
+                }
+            }
+        }
+        sigjmp_buf recover;
+        if (sigsetjmp(recover, 0)) {
+            ++failed;
+            return false;
+        }
+        runtime_fault_recover = &recover;
+        if (level >= 22 && fetch) {
+            const auto found = list.find(info.pgm_hash);
+            size_t index = 0;
+            for (const auto& attrib : fetch->attributes) {
+                auto& a = attribs[attrib.dword_offset];
+                if (found != list.end() && index < found->second.attributes.size()) {
+                    const auto [size, number] = found->second.attributes[index];
+                    a.data_format = u32(AmdGpu::DataFormat::Format32_32_32_32);
+                    if (level != 24) { // 23: class real... 24: size real
+                    }
+                    if (level == 22 || level == 24) {
+                        a.num_format = u32(number == 2   ? AmdGpu::NumberFormat::Uint
+                                           : number == 1 ? AmdGpu::NumberFormat::Sint
+                                                         : AmdGpu::NumberFormat::Float);
+                    }
+                    using S = AmdGpu::CompSwizzle;
+                    if (level == 22 || level == 23) {
+                        a.dst_sel_x = u32(S::Red);
+                        a.dst_sel_y = u32(size >= 2 ? S::Green : S::Zero);
+                        a.dst_sel_z = u32(size >= 3 ? S::Blue : S::Zero);
+                        a.dst_sel_w = u32(size >= 4 ? S::Alpha : S::One);
+                    }
+                }
+                ++index;
+            }
+        }
+        Shader::Info guess{info.hw_stage, info.sw_stage, params};
+        guess.flat_override = &flat;
+        auto fetch_copy = fetch;
+        if (fetch_copy && (level == 10 || level == 11 || level >= 12)) {
+            for (auto& attrib : fetch_copy->attributes) {
+                attrib.num_elements = 4;
+            }
+        }
+        guess.fetch_override = fetch_copy ? &*fetch_copy : nullptr;
+        guess.attrib_override = attribs.data();
+        u64 cubes = 0;
+        for (size_t i = 0; i < info.images.size() && i < 64; ++i) {
+            cubes |= u64(info.images[i].GetSharp(info).IsCube()) << i;
+        }
+        guess.list_mode = level >= 12 && !(level >= 14 && info.hw_stage == HwStage::Compute);
+        guess.list_cubes = level == 12 ? &cubes : nullptr;
+        auto next = start;
+        const auto ir = Shader::TranslateProgram(code, ahead_pools, guess, rt, profile);
+        const auto result = Shader::Backend::SPIRV::EmitSPIRV(profile, rt, ir, next);
+        runtime_fault_recover = nullptr;
+        if (level == 13) {
+            cube_seen = guess.list_found_cubes;
+            cube_real = cubes;
+        }
+        return result == spv;
+    };
+    if (fetch) {
+        std::string line;
+        for (const auto& attrib : fetch->attributes) {
+            const auto a = info.ReadUdReg<AmdGpu::Buffer>(attrib.sgpr_base, attrib.dword_offset);
+            line += fmt::format("[{},{},{},{},{},{},{},{}],", attrib.semantic, u32(a.data_format),
+                                u32(a.num_format), u32(a.dst_sel_x), u32(a.dst_sel_y), u32(a.dst_sel_z),
+                                u32(a.dst_sel_w), u32(a.stride));
+        }
+        std::printf("Attr key: %016llx %s\n", static_cast<unsigned long long>(info.pgm_hash), line.c_str());
+    }
+    {
+        const auto& p = runtime_info.props;
+        std::printf("Regs key: %016llx %u %u %u %u %u %u %u %u", static_cast<unsigned long long>(info.pgm_hash),
+                    stage, p.num_user_data, p.num_input_vgprs, p.num_allocated_vgprs, u32(p.fp_denorm_mode32),
+                    u32(p.fp_denorm_mode16_64), u32(p.fp_round_mode32), u32(p.fp_round_mode16_64));
+        if (info.hw_stage == HwStage::Fragment) {
+            const auto& fs = runtime_info.hw.fs;
+            u32 en = 0;
+            u32 addr = 0;
+            std::memcpy(&en, &fs.en_flags, sizeof(en));
+            std::memcpy(&addr, &fs.addr_flags, sizeof(addr));
+            std::printf(" %08x %08x %u %u %u", en, addr, fs.num_inputs, u32(fs.z_export_format), fs.mrtz_mask);
+        }
+        if (info.hw_stage == HwStage::Vertex) {
+            const auto& vs = runtime_info.hw.vs;
+            std::printf(" %u", vs.num_outputs);
+            for (const auto& map : vs.outputs) {
+                for (const auto out : map) {
+                    std::printf(",%u", u32(out));
+                }
+            }
+        }
+        std::printf("\n");
+    }
+    ++total[stage];
+    static u32 cube_sets_right = 0;
+    u32 sums[25]{};
+    u32 all = 0;
+    for (u32 level = 0; level < 25; ++level) {
+        same[level][stage] += attempt(level);
+    }
+    for (u32 s = 0; s < 8; ++s) {
+        all += total[s];
+        for (u32 level = 0; level < 25; ++level) {
+            sums[level] += same[level][s];
+        }
+    }
+    cube_sets_right += cube_seen == cube_real;
+    std::printf("Cube positions right in %u variants\n", cube_sets_right);
+    std::printf("Shader list check: %u variants, real %u, no addresses %u, key %u, no sRGB %u, plain swizzle %u, "
+                "plain image format %u, no buffer stride %u, float attributes %u, stride 16 %u, attributes by class %u, "
+                "four elements %u, all rules %u, list mode %u, list cubes from code %u, colour class %u, colour swizzle %u, "
+                "plain inputs %u, inputs plus one %u, class and plain inputs %u, from the list %u, no input vgprs %u, "
+                "no output map %u, attributes from the list %u, sizes only %u, classes only %u, list misses %u, faults %u; sizes by stage",
+                all, sums[0], sums[1], sums[2], sums[3], sums[4], sums[5], sums[6], sums[7], sums[8], sums[9],
+                sums[10], sums[11], sums[12], sums[13], sums[14], sums[15], sums[16], sums[17], sums[18], sums[19], sums[20], sums[21], sums[22], sums[23], sums[24], list_missing, failed);
+    for (u32 s = 0; s < 8; ++s) {
+        if (total[s]) {
+            std::printf(" %u:%u/%u", s, same[23][s], total[s]);
+        }
+    }
+    std::printf("\n");
 }
 
 VideoCore::Backend::ShaderHandle PipelineCache::CompileModule(Shader::Info& info, Shader::RuntimeInfo& runtime_info,
@@ -1331,6 +2275,7 @@ VideoCore::Backend::ShaderHandle PipelineCache::CompileModule(Shader::Info& info
                     std::popcount(info.uses_patches));
     }
     DumpShader(spv, info.pgm_hash, info.hw_stage, perm_idx, "spv");
+    ListHit(info, spv, runtime_info);
 
     auto patch = GetShaderPatch(info.pgm_hash, info.hw_stage, perm_idx, "spv");
     const bool is_patched = patch && EmulatorSettings.IsPatchShaders();
@@ -1448,6 +2393,9 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
                                                 SwStage sw_stage,
                                                 const Shader::ShaderParams& params,
                                                 Shader::Backend::Bindings& binding) {
+    if (!sel.worker) {
+        ListBuild();
+    }
     auto runtime_info = BuildRuntimeInfo(sel, hw_stage, sw_stage);
     if (profile.stage_bindings && sw_stage != SwStage::Compute) {
         binding.EnterStage(u32(sw_stage));

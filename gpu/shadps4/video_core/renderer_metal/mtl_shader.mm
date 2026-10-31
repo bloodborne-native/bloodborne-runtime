@@ -39,6 +39,8 @@
 #define BB_SPIRV_CROSS_VERSION "unknown"
 #endif
 
+extern std::atomic<unsigned> bb_list_shaders_done;
+
 namespace Metal {
 
 namespace {
@@ -852,6 +854,7 @@ MetalObjects BuildLibrary(id<MTLDevice> device, const std::string& msl, const st
             const char* env = std::getenv("BB_SHADER_LOG");
             return env && env[0] == '1';
         }();
+        ++bb_list_shaders_done;
         if (shader_log) {
             static std::atomic<u64> libraries{}, library_us{};
             const u64 us = std::chrono::duration_cast<std::chrono::microseconds>(

@@ -1389,6 +1389,9 @@ void Translator::V_CUBEID_F32(const GcnInst& inst) {
 
         result = SelectCubeResult(x, y, z, x_face, y_face, z_face);
     }
+    if (info.list_mode && !result.IsImmediate()) {
+        info.list_cube_insts.push_back(result.Inst());
+    }
     SetDst(inst.dst[0], result);
 }
 

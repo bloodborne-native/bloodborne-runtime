@@ -21,6 +21,10 @@
 #include "shader_recompiler/resource.h"
 #include "shader_recompiler/runtime_info.h"
 
+namespace Shader::Gcn {
+struct FetchShaderData;
+}
+
 namespace Serialization {
 struct Archive;
 }
@@ -276,7 +280,22 @@ struct Info : InfoPersistent {
         bnd.user_data += ud_mask.NumRegs();
     }
 
+    /// Local experiment: a translation from a list, without game memory.
+    const std::vector<u32>* flat_override{};
+    bool list_mode{};
+    u32 list_stride{}, list_data_format{}, list_num_format{}, list_image_type{}, list_swizzle{};
+    const u64* list_cubes{};
+    u64 list_found_cubes{};
+    std::vector<const void*> list_cube_insts{};
+    const Gcn::FetchShaderData* fetch_override{};
+    const AmdGpu::Buffer* attrib_override{};
+
     void RefreshFlatBuf() {
+        if (flat_override) {
+            flattened_ud_buf = *flat_override;
+            flattened_ud_buf.resize(srt_info.flattened_bufsize_dw);
+            return;
+        }
         flattened_ud_buf.resize(srt_info.flattened_bufsize_dw);
         ASSERT(user_data.size() <= NUM_USER_DATA_REGS);
         std::memcpy(flattened_ud_buf.data(), user_data.data(), user_data.size_bytes());
