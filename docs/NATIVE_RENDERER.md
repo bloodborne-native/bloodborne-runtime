@@ -479,6 +479,14 @@ claimed). Each stage's bindings now start from a base of its own (`Bindings::Ent
 only), so the start in a variant's key is the same for every partner: a first play in Iosefka's
 Clinic makes 287 variants instead of 320 and 326 libraries instead of 362.
 
+**With no descriptor table at all.** Every buffer and image a default descriptor (stride 16, a
+plain 2D image), vertex attributes by class and swizzle: 246 of 248 graphics variants of a cold
+run match, given each draw's runtime info and which images are cubes (without the cubes, 21 fewer
+over all stages). Compute matches 4 of 34: every compute variant uses a storage image or a
+formatted buffer, whose real formats a default cannot give, so compute stays at first use for now.
+A list still has to supply each graphics program's colour formats, pixel input order, attributes
+and cube images from the files; real cache hits are not measured yet.
+
 **Progress for the player.** Cache entries are named by program hash and permutation, so the step
 can list what is compiled, skip it, and show compiled of total; what play compiled counts.
 
