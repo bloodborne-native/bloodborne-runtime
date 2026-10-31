@@ -101,7 +101,13 @@ PipelineFactory::PipelineFactory(Device& device, std::filesystem::path cache_dir
 PipelineFactory::~PipelineFactory() = default;
 
 void PipelineFactory::Prefetch(std::shared_ptr<const ShaderModule> module) {
-    if (shader_threads) {
+    if (!shader_threads) {
+        return;
+    }
+    // Tessellation and geometry stages compile only as variants of a pipeline.
+    const ShaderStage stage = ReadShaderStage(module->Spirv());
+    if (stage == ShaderStage::Vertex || stage == ShaderStage::Fragment ||
+        stage == ShaderStage::Compute) {
         shader_threads->Submit(std::move(module));
     }
 }

@@ -484,8 +484,27 @@ plain 2D image), vertex attributes by class and swizzle: 246 of 248 graphics var
 run match, given each draw's runtime info and which images are cubes (without the cubes, 21 fewer
 over all stages). Compute matches 4 of 34: every compute variant uses a storage image or a
 formatted buffer, whose real formats a default cannot give, so compute stays at first use for now.
-A list still has to supply each graphics program's colour formats, pixel input order, attributes
-and cube images from the files; real cache hits are not measured yet.
+Tessellation and geometry stages also stay at first use: they read constants a default cannot
+give.
+
+**What a shader's own file gives.** All 8,851 programs, in the bundles and in the executable, have
+a `Shdr` header with the stage's registers. From a list built from those headers alone, 276 of
+282 variants of a cold run match (pixel 144 of 147, vertex 99 of 99; compute kept its real table,
+and attributes and colours are still real). What the header holds:
+
+- User data and register counts, and the enabled pixel inputs: all programs checked.
+- Pixel input order, with no vertex partner needed: each pixel shader's table of input semantics,
+  minus the first export semantic, gives all 104 programs with files (the tables were not checked
+  on the executable's programs).
+- Colour export formats, one nibble per target: 138 of 147 pixel variants. The other 9 declare an
+  output in a draw with no colour target, so a pixel shader needs two candidates at most.
+- Vertex inputs (semantic, register, size): the table was found in 90 of 130 programs; the declared
+  size equals the real component count for 290 of 311 attributes.
+
+Images that are cubes come from the code: V_CUBEID's result reaches the sample's coordinates, right
+in 280 of 282 variants. A colour target needs only its number class and swizzle. Still to supply:
+each vertex attribute's class, the other 40 vertex tables, the number of input registers (12
+variants depend on it), and colour swizzles. Real cache hits are not measured yet.
 
 **Progress for the player.** Cache entries are named by program hash and permutation, so the step
 can list what is compiled, skip it, and show compiled of total; what play compiled counts.
