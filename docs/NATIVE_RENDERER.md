@@ -245,7 +245,7 @@ the test save, translator, no faults):
 | N2.2 · the inventory | 100% `████████████████████` | The shaders use the user data only to locate their resources (below) |
 | N2.3 · mesh draws from the draw state | 100% `████████████████████` | Done, opt-in (`BB_RENDER_BOUNDARY=flat`): mesh draws' flattened user data from the draw state on the workers and the GPU thread, without the walker; exact; the observer still costs 42 CPU points ([below](#n23s-design-the-flat-buffer-from-the-draw-state)) |
 | N2.4 · the other draw kinds | 80% `████████████████░░░░` | The draw methods' other draws: done. Compute passes and the draws outside the methods: most read their sharps straight from the user-data registers, which needs no boundary ([below](#n24-the-other-draw-kinds-and-compute-passes)). Left: method draws whose program has no plan (6% of draw stages), the draws (2%) and surface operations (16% of dispatch stages) that walk tables |
-| N2.5 · ahead of time | 40% `████████░░░░░░░░░░░░` | Designed and measured ([below](#n25-shaders-ahead-of-time)): a true first play, with Metal's own system cache empty too, spends 8.4 s compiling MSL into libraries and 4.9 s building pipelines; the worst frame takes 4.9 s. Shaders compiling on worker threads and translated ahead of the GPU thread (opt-in) bring the stalls from 12 s to 7 s and the worst frame to 2.0 s. Next: a long session with `BB_SHADER_AHEAD=1` before it becomes the default, then the pipelines' 4.9 s, which need keys the shaders do not hold |
+| N2.5 · ahead of time | 40% `████████░░░░░░░░░░░░` | Designed and measured ([below](#n25-shaders-ahead-of-time)): a true first play, with Metal's own system cache empty too, spends 8.4 s compiling MSL into libraries and 4.9 s building pipelines; the worst frame takes 4.9 s. Shaders compiling on worker threads and translated ahead of the GPU thread (opt-in) bring the stalls from 12 s to 7 s and the worst frame to 2.0 s. Next: a long session with `BB_SHADER_AHEAD=1` before it becomes the default, then the pipelines' 4.9 s, which need keys the shaders do not hold. A step from the game's files alone reproduces only 8% of variants: the optional step needs a list of the draws' state |
 
 ### The inventory (N2.2)
 
@@ -426,6 +426,14 @@ Two alternating pairs from empty caches (M3 Pro, Iosefka's Clinic):
 The frame rate in play does not change (48.6–48.8 FPS). Translating ahead stays opt-in until a long
 session has passed: the translator's asserts are fatal, and it now reads a pending draw's code ahead
 of the GPU thread. The pipelines' 4.9 s is what is left of a first play's stalls.
+
+**What a step can predict from the files alone.** Measured by translating each of a cold run's 320
+variants a second time with the draw's inputs guessed and comparing the SPIR-V (the same inputs
+matched 320 of 320): with empty user data 114 matched, with the pixel inputs in plain order 291,
+with one colour format for every target 199, and with all three 25 (8%). The guesses are simple
+ones and a bad guess can stop the translator, which treats it as fatal: a guessed colour format's
+export stopped one run. So a step that reads only the game's files cannot reproduce most variants;
+it needs the draws' state, which only play sessions see.
 
 **What tells variants apart:** of the 61 later variants, 37 differ only in their binding numbers,
 20 in images or buffers (an image's type or sRGB, a buffer's format), 5 in runtime settings and
