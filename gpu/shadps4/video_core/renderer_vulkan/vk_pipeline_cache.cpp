@@ -1393,7 +1393,8 @@ __attribute__((noinline)) int PipelineCache::TranslateForCompile(HwStage hw, SwS
 // keeps moving.
 void PipelineCache::CompileAhead() {
     static bool started = false;
-    if (started || !std::getenv("BB_SHADER_COMPILE")) {
+    // Metal only: the step depends on shaders independent of their draw.
+    if (started || !std::getenv("BB_SHADER_COMPILE") || !device.GetCapabilities().free_colour) {
         return;
     }
     started = true;
