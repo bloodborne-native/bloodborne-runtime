@@ -579,6 +579,14 @@ of 0.82 s. The prediction still took its states from other pipelines of the same
 pipeline's real pair and vertex formats, and took 4,098 Metal builds for 206 pipelines. That run
 made 342 variants, not 287, for a reason not found.
 
+Each colour state implies its pixel shader candidate, which halved those builds to 2,282. Compute
+headers hold every register: workgroup size, user data, register count (a plain multiple of 4) and
+the thread ID flags. Only formats are left, so each of the game's 68 compute programs is tried with
+16 pairs of format and channel order against 5 image types: a storage image has the format and
+order of the buffer beside it. That gave 25 of 35 compute variants; programs mixing several buffer
+formats and large strides stay at first use. With shaders, compute and predicted pipelines for one
+session, a cold first play stalled for 4.9 s with a worst frame of 0.77 s (one run).
+
 **Progress for the player.** Cache entries are named by program hash and permutation, so the step
 can list what is compiled, skip it, and show compiled of total; what play compiled counts.
 
