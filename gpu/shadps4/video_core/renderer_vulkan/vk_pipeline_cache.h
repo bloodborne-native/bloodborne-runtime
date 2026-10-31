@@ -12,7 +12,6 @@
 #include "shader_recompiler/profile.h"
 #include "shader_recompiler/recompiler.h"
 #include "shader_recompiler/specialization.h"
-#include "shader_recompiler/frontend/fetch_shader.h"
 #include "video_core/amdgpu/pixel_format.h"
 #include "video_core/renderer_vulkan/vk_compute_pipeline.h"
 #include "video_core/renderer_vulkan/vk_graphics_pipeline.h"
@@ -224,15 +223,6 @@ private:
                         const Shader::ShaderParams& params, Shader::RuntimeInfo runtime_info,
                         Shader::Backend::Bindings& binding);
     Shader::Pools ahead_pools;
-    void ListBuild();
-    void ListBuildWork();
-    int ListTranslate(Shader::HwStage hw, Shader::SwStage sw, const Shader::ShaderParams& params,
-                      Shader::RuntimeInfo& rt, std::span<const u32> code,
-                      const Shader::Gcn::FetchShaderData* fetch, const AmdGpu::Buffer* attribs);
-    void ListHit(const Shader::Info& info, const std::vector<u32>& spv, const Shader::RuntimeInfo& rt);
-    void ListCheck(const Shader::Info& info, const Shader::RuntimeInfo& runtime_info,
-                   std::span<const u32> code, const Shader::Backend::Bindings& start,
-                   const std::vector<u32>& spv);
     tsl::robin_map<u64, Shader::Backend::Bindings> ahead_seen; ///< on the ahead thread
 
 public:

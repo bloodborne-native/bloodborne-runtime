@@ -93,9 +93,6 @@ extern "C" const unsigned char bb_font_heading_ttf[], bb_font_heading_ttf_end[];
 
 extern "C" void runtime_restart(void); // bb-probe (probe.c)
 
-std::atomic<unsigned> bb_list_shaders_done{}, bb_list_shaders_total{}, bb_list_pipelines_done{},
-    bb_list_pipelines_total{};
-
 namespace BbOverlay {
 
 namespace {
@@ -1218,34 +1215,6 @@ void CenteredText(const char* text, float wrap) {
             ++line;
         }
     }
-}
-
-/// Local experiment: the bar of the shader and pipeline build.
-void ListBar() {
-    const unsigned shaders = bb_list_shaders_total.load();
-    const unsigned pipelines = bb_list_pipelines_total.load();
-    if (!shaders) {
-        return;
-    }
-    const unsigned shaders_done = std::min(bb_list_shaders_done.load(), shaders);
-    const unsigned pipelines_done = std::min(bb_list_pipelines_done.load(), pipelines);
-    const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
-                                   viewport->WorkPos.y + viewport->WorkSize.y * 0.5f),
-                            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(viewport->WorkSize.x * 0.5f, 0));
-    ImGui::SetNextWindowBgAlpha(0.9f);
-    ImGui::Begin("##listbar", nullptr,
-                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
-                     ImGuiWindowFlags_NoFocusOnAppearing);
-    const auto row = [](const char* name, unsigned done, unsigned total) {
-        const float fraction = total ? float(done) / float(total) : 0.0f;
-        ImGui::Text("%s: %u of %u (%.0f%%)", name, done, total, fraction * 100.0f);
-        ImGui::ProgressBar(fraction, ImVec2(-1, 0), "");
-    };
-    row("Shaders", shaders_done, shaders);
-    row("Pipelines", pipelines_done, pipelines);
-    ImGui::End();
 }
 
 void TestBanner() {
@@ -2447,7 +2416,6 @@ void BuildUi(std::chrono::steady_clock::time_point now) {
     if (TestTitle() && !menu_open) {
         TestBanner();
     }
-    ListBar();
     ImGui::Render();
 }
 } // namespace

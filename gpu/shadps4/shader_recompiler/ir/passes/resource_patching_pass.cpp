@@ -215,27 +215,6 @@ void PatchBufferSharp(const ResourceDiscovery& resource, Info& info, Descriptors
     inst.SetArg(0, ir.Imm32(buffer_binding));
 }
 
-// Local experiment: an image sampled with coordinates made by V_CUBEID is a cube.
-static bool ReachesCubeFace(const Info& info, const IR::Value& value, int depth) {
-    if (value.IsImmediate() || depth == 0) {
-        return false;
-    }
-    const IR::Inst* inst = value.TryInst();
-    if (!inst) {
-        return false;
-    }
-    if (std::ranges::find(info.list_cube_insts, static_cast<const void*>(inst)) !=
-        info.list_cube_insts.end()) {
-        return true;
-    }
-    for (u32 arg = 0; arg < inst->NumArgs(); ++arg) {
-        if (ReachesCubeFace(info, inst->Arg(arg), depth - 1)) {
-            return true;
-        }
-    }
-    return false;
-}
-
 void PatchImageSharp(const ResourceDiscovery& resource, Info& info, Descriptors& descriptors,
                      const Profile& profile) {
     IR::Inst& inst = *resource.user;
@@ -337,13 +316,6 @@ void PatchImageSharp(const ResourceDiscovery& resource, Info& info, Descriptors&
     }
 
     u32 image_binding = descriptors.Add(image_res);
-    if (info.list_mode && image_binding < 64) {
-        for (u32 arg = 1; arg < inst.NumArgs(); ++arg) {
-            if (ReachesCubeFace(info, inst.Arg(arg), 8)) {
-                info.list_found_cubes |= u64(1) << image_binding;
-            }
-        }
-    }
 
     IR::IREmitter ir{*inst.GetParent(), IR::Block::InstructionList::s_iterator_to(inst)};
 

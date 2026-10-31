@@ -89,28 +89,6 @@ struct BufferResource {
     }
 
     constexpr AmdGpu::Buffer GetSharp(const auto& info) const noexcept {
-        if (info.list_mode) {
-            AmdGpu::Buffer b{};
-            b.base_address = 1;
-            b.num_records = 1;
-            b.stride = 16;
-            b.data_format = u32(AmdGpu::DataFormat::Format32_32_32_32);
-            b.num_format = u32(AmdGpu::NumberFormat::Float);
-            b.dst_sel_x = u32(AmdGpu::CompSwizzle::Red);
-            b.dst_sel_y = u32(AmdGpu::CompSwizzle::Green);
-            b.dst_sel_z = u32(AmdGpu::CompSwizzle::Blue);
-            b.dst_sel_w = u32(AmdGpu::CompSwizzle::Alpha);
-            if (is_formatted && info.list_stride) {
-                b.stride = info.list_stride;
-                b.data_format = info.list_data_format;
-                b.num_format = info.list_num_format;
-                b.dst_sel_x = (info.list_swizzle >> 12) & 7;
-                b.dst_sel_y = (info.list_swizzle >> 8) & 7;
-                b.dst_sel_z = (info.list_swizzle >> 4) & 7;
-                b.dst_sel_w = info.list_swizzle & 7;
-            }
-            return b;
-        }
         AmdGpu::Buffer buffer;
         if (!sharp_fetch.Fetch(info.FlatUserData().data(), &buffer)) {
             return AmdGpu::Buffer::Null();
@@ -157,29 +135,6 @@ struct ImageResource {
     SharpFetchPostOp post_op{};
 
     constexpr AmdGpu::Image GetSharp(const auto& info) const noexcept {
-        if (info.list_mode) {
-            AmdGpu::Image plain = AmdGpu::Image::Null(is_depth);
-            plain.base_address = 1;
-            if (info.list_image_type) {
-                plain.type = info.list_image_type;
-                plain.data_format = info.list_data_format;
-                plain.num_format = info.list_num_format;
-                plain.dst_sel_x = (info.list_swizzle >> 12) & 7;
-                plain.dst_sel_y = (info.list_swizzle >> 8) & 7;
-                plain.dst_sel_z = (info.list_swizzle >> 4) & 7;
-                plain.dst_sel_w = info.list_swizzle & 7;
-            }
-            const auto* first = info.images.data();
-            const size_t index = this >= first && this < first + info.images.size()
-                                     ? size_t(this - first)
-                                     : 64;
-            const u64 cubes = info.list_cubes ? *info.list_cubes : info.list_found_cubes;
-            if (index < 64 && (cubes >> index & 1)) {
-                plain.type = u64(AmdGpu::ImageType::Cube);
-                plain.last_array = 5;
-            }
-            return plain;
-        }
         AmdGpu::Image image{};
         if (!Fetch(info.FlatUserData().data(), &image)) {
             return AmdGpu::Image::Null(is_depth);
