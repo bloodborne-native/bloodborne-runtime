@@ -587,6 +587,20 @@ order of the buffer beside it. That gave 25 of 35 compute variants; programs mix
 formats and large strides stay at first use. With shaders, compute and predicted pipelines for one
 session, a cold first play stalled for 4.9 s with a worst frame of 0.77 s (one run).
 
+**The whole game, generated.** A vertex attribute's real format comes from the mesh, not the
+shader: Metal compiles it into the pipeline. For models the semantic decides it, with `TEXCOORD`
+following its size; other sources follow a few patterns tried as candidates. The executable's
+programs, which have no pass name, are grouped by the family in their own name. Pairs and states
+generated this way hold 186 of the 206 real pipelines of a cold run (pairs 193, states 193 among
+two, formats 204); the state table still comes from that one session, so other areas are untested.
+Metal built every shader and 97,722 pipeline candidates, with the game drawing nothing: the
+pipelines took 174 s on one thread and Metal's cache ended at 392 MB. 66,744 generated pipelines
+leave 5,450 pairs with no known state. A first play on that cache stalled for 4.9 s with a worst
+frame of 0.86 s, Metal's pipeline work 1.1 s against 3.7 s (one run). One run on that cache stopped
+on a stale descriptor (data format 15), unrelated to this work; Wooloomooloo2's safe read
+(`UPSTREAM.md`) addresses that class. A progress bar over the build ran in the prototype; it was
+not checked on screen.
+
 **Progress for the player.** Cache entries are named by program hash and permutation, so the step
 can list what is compiled, skip it, and show compiled of total; what play compiled counts.
 
