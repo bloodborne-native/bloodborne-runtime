@@ -1181,6 +1181,9 @@ bool PipelineCache::RefreshGraphicsStages(PipelineSelection& sel) {
                 vertex_runtime.fixed_quad_vertex = true;
                 vertex_runtime.fixed_quad_vertex_count = 0;
                 auto vertex_binding = domain_binding;
+                if (profile.stage_bindings) {
+                    vertex_binding.EnterStage(u32(SwStage::TessellationEval));
+                }
                 const auto ir = Shader::TranslateProgram(params.code, pools, vertex_info,
                                                          vertex_runtime, profile);
                 auto spv = Shader::Backend::SPIRV::EmitSPIRV(profile, vertex_runtime, ir,
@@ -1446,6 +1449,9 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
                                                 const Shader::ShaderParams& params,
                                                 Shader::Backend::Bindings& binding) {
     auto runtime_info = BuildRuntimeInfo(sel, hw_stage, sw_stage);
+    if (profile.stage_bindings && sw_stage != SwStage::Compute) {
+        binding.EnterStage(u32(sw_stage));
+    }
     if (sel.worker) {
         // bbport: draw-preparation worker: look up only, with the worker's own Info copy.
         auto& worker = *sel.worker;

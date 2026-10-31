@@ -51,6 +51,7 @@ struct Profile {
     bool needs_integer_interpolation_fix{};
     bool needs_lds_barriers{};
     bool needs_buffer_offsets{};
+    bool stage_bindings{}; ///< bbport: Backend::Bindings::EnterStage
     bool needs_unorm_fixup{};
     bool needs_clip_distance_emulation{};
     bool supports_shader_stencil_export{};

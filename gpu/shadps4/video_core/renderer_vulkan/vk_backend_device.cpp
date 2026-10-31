@@ -68,6 +68,7 @@ BackendDevice::BackendDevice(Frontend::WindowSDL& window, s32 physical_device_in
     // shader no longer depends on how many buffers its pixel shader uses.
     if (MetalLayer::FrameEnabled()) {
         capabilities.storage_min_alignment = 4;
+        capabilities.stage_bindings = true;
     }
 #endif
     capabilities.integrated = instance.IsIntegrated();
@@ -822,6 +823,7 @@ Shader::Profile BackendDevice::ShaderProfile() const {
         .needs_lds_barriers = instance.GetDriverID() == vk::DriverId::eNvidiaProprietary ||
                               instance.GetDriverID() == vk::DriverId::eMesaKosmickrisp,
         .needs_buffer_offsets = GetCapabilities().storage_min_alignment > 4,
+        .stage_bindings = GetCapabilities().stage_bindings,
         .needs_unorm_fixup = instance.GetDriverID() == vk::DriverId::eMesaKosmickrisp,
         .needs_clip_distance_emulation = instance.GetDriverID() == vk::DriverId::eNvidiaProprietary,
         .supports_shader_stencil_export = instance.IsShaderStencilExportSupported(),

@@ -2709,6 +2709,7 @@ bool Rasterizer::BindResources(const Pipeline* pipeline) {
 
     // Bind resource buffers and textures.
     Shader::Backend::Bindings binding{};
+    const bool stage_bindings = device.GetCapabilities().stage_bindings;
     push_data = MakeUserData(Regs());
     if (!HelperEligible(pipeline)) {
         ++helper_serial;
@@ -2718,6 +2719,9 @@ bool Rasterizer::BindResources(const Pipeline* pipeline) {
             }
             set_writes.resize(set_writes.size() + stage->buffers.size() + stage->images.size() +
                               stage->samplers.size());
+            if (stage_bindings && stage->sw_stage != Shader::SwStage::Compute) {
+                binding.EnterStage(u32(stage->sw_stage));
+            }
             stage->PushUd(binding, push_data);
             const PreparedStage* prepared = FindPreparedStage(*stage);
             BindBuffers(*stage, prepared, binding, push_data, set_write_index);
@@ -2747,6 +2751,9 @@ bool Rasterizer::BindResources(const Pipeline* pipeline) {
             const u32 num_descriptors =
                 num_buffers + static_cast<u32>(stage->images.size() + stage->samplers.size());
             set_writes.resize(set_writes.size() + num_descriptors);
+            if (stage_bindings && stage->sw_stage != Shader::SwStage::Compute) {
+                binding.EnterStage(u32(stage->sw_stage));
+            }
             stage->PushUd(binding, push_data);
             const PreparedStage* prepared = FindPreparedStage(*stage);
             buffer_stages[task.count] = {stage, prepared, binding, set_write_index};

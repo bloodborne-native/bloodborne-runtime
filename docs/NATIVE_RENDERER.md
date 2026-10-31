@@ -475,7 +475,9 @@ pixel shader. The Metal renderer now binds storage buffers at exact offsets and 
 (storage alignment 4 instead of MoltenVK's 16). With the start at zero and binding numbers and
 debug names ignored, all 315 variants then match, the rules above included. An empty-cache pair:
 46.4 FPS against 43.8, stalls 11.5 s against 13.0 s, the same picture (one pair, so no gain is
-claimed). The start is still part of a variant's key, so the variants have not merged yet.
+claimed). Each stage's bindings now start from a base of its own (`Bindings::EnterStage`, Metal
+only), so the start in a variant's key is the same for every partner: a first play in Iosefka's
+Clinic makes 287 variants instead of 320 and 326 libraries instead of 362.
 
 **Progress for the player.** Cache entries are named by program hash and permutation, so the step
 can list what is compiled, skip it, and show compiled of total; what play compiled counts.
