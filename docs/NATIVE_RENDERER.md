@@ -622,6 +622,27 @@ library time from 2.2 s to 0.8 s. Loading a Metal binary archive of all the pipe
 game for over a minute on one thread before anything is drawn, so that archive cannot simply hold
 everything. Without an archive, pipelines are made in play (42.6 FPS in that run).
 
+**With a shader independent of its draw.** A pixel shader's colour outputs and a vertex shader's
+attributes no longer depend on the target or the mesh: Metal fills a vertex attribute's missing
+components, so a V# that says the same needs no swizzle, and an integer attribute takes its fourth
+component from the draw (`PushData::attrib_w_zero`). Output maps are safe to give every vertex
+shader in the step: a shader without those exports does not change. Against shaders generated from
+the game's files, a first play matches pixel 138 of 142, vertex 92 of 101 and compute 24 of 34;
+tessellation stages are not generated yet. The rest compile at first use. Compute's misses are a
+few generic copy programs over a fixed set of formats plus mixed-format programs, so they keep
+several forms rather than decode formats in the shader.
+
+The local prototype, whole game (12,553 shaders, 66,454 pipelines in 104 s on one thread, Metal's
+cache 268 MB), then a first play with empty test caches apart from Metal's and the compiled store,
+one run of each: the scripted run had 2.7 s of stalls, all while loading (723 ms worst), no compile
+in any window of play, a worst frame in play of 67 ms and 49 FPS. Charged R2 eight times: 16
+compiles and 120 ms in all, a worst frame of 76 ms. Only Iosefka's Clinic has been measured.
+
+The engine's render state could not be located by reading the executable. The pipeline step needs
+the state sets seen in play, so they are to be recorded on the player's device during normal play
+and combined with the shader pairs there: nothing is shipped, and a player who compiles before
+ever playing gets shaders first and pipelines at the next compile.
+
 **Progress for the player.** Cache entries are named by program hash and permutation, so the step
 can list what is compiled, skip it, and show compiled of total; what play compiled counts.
 
