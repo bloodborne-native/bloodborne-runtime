@@ -511,7 +511,7 @@ in 280 of 282 variants. A colour target needs only its number class: on Metal a 
 four channels and each draw says where each component goes (`PushData::mrt_order`), so the channel
 order is no longer part of a shader. One alternating pair showed no FPS cost and the same picture,
 and a first play in Iosefka's Clinic has 283 programs and 24 extra variants, none of them from
-colour (compute formats 16, images in pixel shaders 5, vertex 3). Still to supply: vertex
+colour (compute formats 16, pixel images 4, vertex 4). Still to supply: vertex
 attributes' components and classes where the rules above miss.
 
 **A list from the files, measured.** A local prototype translated programs from the game's files
