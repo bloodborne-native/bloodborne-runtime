@@ -533,6 +533,13 @@ vertex program has one vertex format set, all draw triangle lists, and each pass
 except `gbuf` (3) and `fwd` (2). The other 127 pipelines, the fixed passes, are not predicted yet;
 the engine names many of their shaders directly, and 64 use the executable's own programs.
 
+Timed in one cold run, model pipelines take 3.6 s and fixed-pass pipelines 5.1 s of the 8.7 s spent
+making them, shader waits included, and the slowest moments hold both, so a list of model
+pipelines alone does not remove the worst freeze. Pairing fixed passes by what a vertex shader
+exports and a pixel shader reads keeps every real pair (113 of 113) but allows 607,418: too many.
+The executable's 5,498 programs are three groups: 5,139 in a post-effects library of permutations
+(45 used in that run), 338 for the interface (31 used) and 16 mostly compute (23 variants used).
+
 **Progress for the player.** Cache entries are named by program hash and permutation, so the step
 can list what is compiled, skip it, and show compiled of total; what play compiled counts.
 
