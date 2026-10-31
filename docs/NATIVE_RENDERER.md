@@ -565,6 +565,20 @@ list held only that session's programs, so this is the best case. The header als
 front-face flag of 24 pixel variants, and an integer attribute's missing channels read 0 where a
 float's last reads 1.
 
+At full size the list held: all 8,373 vertex and pixel programs but one took 25,013 shaders, compiled
+through Metal in under 5.5 minutes, and Metal's cache ended at 273 MB. A first play after that alone
+(the game exited before drawing anything) stalled for 7.9 s with a worst frame of 2.0 s: the
+pipelines' 3.9 s remained.
+
+**Pipeline state predicted.** A shader knows what it outputs, not where it goes: header fields give
+all of a pipeline's state for 148 of 203 pipelines, fitted on those same pipelines. With the render
+pass added and each pipeline predicted only from the others, the real state is the first guess for
+139 of 206 and among the first three for 167. A cold first play with that session's shaders from
+the files and three predicted states each built before play stalled for 5.5 s with a worst frame
+of 0.82 s. The prediction still took its states from other pipelines of the same session, kept each
+pipeline's real pair and vertex formats, and took 4,098 Metal builds for 206 pipelines. That run
+made 342 variants, not 287, for a reason not found.
+
 **Progress for the player.** Cache entries are named by program hash and permutation, so the step
 can list what is compiled, skip it, and show compiled of total; what play compiled counts.
 
