@@ -447,9 +447,18 @@ skinning, and 2,000 sampled models 30 layouts. Materials name 81 of the 97 model
 with substitutions by name; the whole model bundle, 14,571 files, reaches all 97, so a step can
 compile every program without choosing among them. Each shader file carries its compiler's
 reflection (resources, inputs, outputs). Among the 44 model pixel variants the pass decides the
-colour formats of 43, and every sampler is the default one. Predicting images' sRGB and cube
-types, vertex attribute classes, pixel input order and binding starts from the files is not
-measured yet.
+colour formats of 43, and every sampler is the default one. The reflection's texture records give
+the cube images of all 44 pixel variants.
+
+**Which descriptor fields a variant's SPIR-V depends on** (one cold run, each field flattened
+alone, 313 of 315 matching before any was): an image's sRGB and data format change nothing. Plain
+swizzles change 13 variants, one 32-bit float format for every vertex attribute 76, and a stride
+of zero for every buffer 135. So a list needs buffer strides and vertex attribute formats, some
+swizzles, and not the textures' formats. Pixel input order and binding starts are not predicted
+yet.
+
+**Progress for the player.** Cache entries are named by program hash and permutation, so the step
+can list what is compiled, skip it, and show compiled of total; what play compiled counts.
 
 **What tells variants apart:** of the 61 later variants, 37 differ only in their binding numbers,
 20 in images or buffers (an image's type or sRGB, a buffer's format), 5 in runtime settings and
