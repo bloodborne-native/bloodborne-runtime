@@ -63,6 +63,13 @@ BackendDevice::BackendDevice(Frontend::WindowSDL& window, s32 physical_device_in
         instance.GetPhysicalDevice().getProperties().limits.timestampPeriod;
     capabilities.uniform_min_alignment = instance.UniformMinAlignment();
     capabilities.storage_min_alignment = instance.StorageMinAlignment();
+#if BB_METAL_BACKEND
+    // bbport: Metal binds a buffer at any dword offset. Without the shaders' offset table a vertex
+    // shader no longer depends on how many buffers its pixel shader uses.
+    if (MetalLayer::FrameEnabled()) {
+        capabilities.storage_min_alignment = 4;
+    }
+#endif
     capabilities.integrated = instance.IsIntegrated();
     capabilities.memory_report = instance.CanReportMemoryUsage();
     capabilities.tessellation = instance.IsTessellationSupported();
@@ -814,7 +821,7 @@ Shader::Profile BackendDevice::ShaderProfile() const {
         }(),
         .needs_lds_barriers = instance.GetDriverID() == vk::DriverId::eNvidiaProprietary ||
                               instance.GetDriverID() == vk::DriverId::eMesaKosmickrisp,
-        .needs_buffer_offsets = instance.StorageMinAlignment() > 4,
+        .needs_buffer_offsets = GetCapabilities().storage_min_alignment > 4,
         .needs_unorm_fixup = instance.GetDriverID() == vk::DriverId::eMesaKosmickrisp,
         .needs_clip_distance_emulation = instance.GetDriverID() == vk::DriverId::eNvidiaProprietary,
         .supports_shader_stencil_export = instance.IsShaderStencilExportSupported(),

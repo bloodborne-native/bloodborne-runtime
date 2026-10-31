@@ -466,7 +466,16 @@ one in 14; pairing vertex and pixel shaders by name found a partner for only 25 
 pixel variants use 15 colour sets, 12 of which cover 144. The executable's programs have no
 reflection; 41 of its 43 pixel variants read their inputs in plain order and they use 4 colour
 sets. One variant per program can reach at most 260 of the 320 variants (231 programs had one);
-a list needs a few candidates for the rest. Binding starts are not handled yet.
+a list needs a few candidates for the rest.
+
+**Binding starts.** Pixel shaders are made first, so a vertex shader's bindings start after its
+pixel shader's. Binding numbers are renumbered for Metal anyway, but the buffer start was also an
+index into the shaders' buffer offset table, which made a vertex shader's code depend on its
+pixel shader. The Metal renderer now binds storage buffers at exact offsets and has no such table
+(storage alignment 4 instead of MoltenVK's 16). With the start at zero and binding numbers and
+debug names ignored, all 315 variants then match, the rules above included. An empty-cache pair:
+46.4 FPS against 43.8, stalls 11.5 s against 13.0 s, the same picture (one pair, so no gain is
+claimed). The start is still part of a variant's key, so the variants have not merged yet.
 
 **Progress for the player.** Cache entries are named by program hash and permutation, so the step
 can list what is compiled, skip it, and show compiled of total; what play compiled counts.
