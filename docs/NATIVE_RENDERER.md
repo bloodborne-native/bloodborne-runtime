@@ -454,8 +454,19 @@ the cube images of all 44 pixel variants.
 alone, 313 of 315 matching before any was): an image's sRGB and data format change nothing. Plain
 swizzles change 13 variants, one 32-bit float format for every vertex attribute 76, and a stride
 of zero for every buffer 135. So a list needs buffer strides and vertex attribute formats, some
-swizzles, and not the textures' formats. Pixel input order and binding starts are not predicted
-yet.
+swizzles, and not the textures' formats. With every buffer's stride 16 outside compute, four
+elements per attribute and each attribute's format taken from its number class and swizzle alone,
+314 of 315 still match, as many as the full key.
+
+**What remains to predict.** A vertex shader's input records give the attribute count of all 74
+model variants, but on held-out programs the records alone give the class and swizzle of 154 of
+178 attributes and 19 of 34 whole programs: the rest needs the models' vertex layouts. Real
+attributes use 10 formats. Pixel inputs are in plain order in 119 of 147 variants and shifted by
+one in 14; pairing vertex and pixel shaders by name found a partner for only 25 of 103. The 147
+pixel variants use 15 colour sets, 12 of which cover 144. The executable's programs have no
+reflection; 41 of its 43 pixel variants read their inputs in plain order and they use 4 colour
+sets. One variant per program can reach at most 260 of the 320 variants (231 programs had one);
+a list needs a few candidates for the rest. Binding starts are not handled yet.
 
 **Progress for the player.** Cache entries are named by program hash and permutation, so the step
 can list what is compiled, skip it, and show compiled of total; what play compiled counts.
