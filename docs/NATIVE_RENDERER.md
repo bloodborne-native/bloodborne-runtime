@@ -550,6 +550,21 @@ allowing that takes the fixed pairs to 77,137, so they stay at first use; so do 
 pipelines and 5 with geometry or tessellation stages. The exact pairs are an upper bound, not the
 engine's rules, and no pipeline has been built from them yet.
 
+**What a step must fill: Metal's cache.** A first play with our cache empty and Metal's system cache
+warm stalls for 1.7 s with a worst frame of 0.73 s, against 10.9 s and 3.7 s truly cold, and 0.6 s
+and 0.23 s with both warm. So nearly all of a first play's stalls are Metal compiling, and a step
+only has to run each shader and pipeline through Metal once: it does not have to write our cache
+or match our keys. Nothing is known yet about how long Metal keeps that much in its cache.
+
+A prototype did that for one session, truly cold: it translated the session's programs from the
+game's files with up to five candidates, then built the session's pipelines through Metal with the
+state recorded from an earlier run, before play. First-play stalls fell to 3.5 s and the worst
+frame to 0.74 s. 226 of the 249 graphics variants were there (pixel 142 of 147, vertex 84 of 102);
+compute (34) and tessellation (4) compiled in play. The state was recorded, not predicted, and the
+list held only that session's programs, so this is the best case. The header also gives the
+front-face flag of 24 pixel variants, and an integer attribute's missing channels read 0 where a
+float's last reads 1.
+
 **Progress for the player.** Cache entries are named by program hash and permutation, so the step
 can list what is compiled, skip it, and show compiled of total; what play compiled counts.
 
