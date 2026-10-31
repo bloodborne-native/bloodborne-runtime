@@ -347,8 +347,10 @@ void EmitContext::DefineInputs() {
         if (!fetch_shader) {
             break;
         }
+        u32 attrib_order = 0;
         for (const auto& attrib : fetch_shader->attributes) {
             ASSERT(attrib.semantic < IR::NumParams);
+            attrib_order_of[attrib.semantic] = attrib_order++;
             const auto sharp = attrib.GetSharp(info);
             const Id type{GetAttributeType(*this, sharp.GetNumberFmt())[4]};
             Id id{DefineInput(type, attrib.semantic)};
@@ -805,7 +807,7 @@ void EmitContext::DefineOutputs() {
 void EmitContext::DefinePushDataBlock() {
     // Create push constants block for instance steps rates
     const Id struct_type{Name(TypeStruct(F32[1], F32[1], F32[1], F32[1], U32[4], U32[4], U32[4],
-                                         U32[4], U32[4], U32[4], U32[2], U32[1], U32[1], U32[1], U32[1]),
+                                         U32[4], U32[4], U32[4], U32[2], U32[1], U32[1], U32[1], U32[1], U32[1]),
                               "AuxData")};
     Decorate(struct_type, spv::Decoration::Block);
     MemberName(struct_type, PushData::XOffsetIndex, "xoffset");
@@ -838,6 +840,8 @@ void EmitContext::DefinePushDataBlock() {
     MemberDecorate(struct_type, PushData::MrtOrderIndex + 0, spv::Decoration::Offset, 128U);
     MemberName(struct_type, PushData::MrtOrderIndex + 1, "mrt_order1");
     MemberDecorate(struct_type, PushData::MrtOrderIndex + 1, spv::Decoration::Offset, 132U);
+    MemberName(struct_type, PushData::AttribWZeroIndex, "attrib_w_zero");
+    MemberDecorate(struct_type, PushData::AttribWZeroIndex, spv::Decoration::Offset, 136U);
     push_data_block = DefineVar(struct_type, spv::StorageClass::PushConstant);
     Name(push_data_block, "push_data");
     interfaces.push_back(push_data_block);

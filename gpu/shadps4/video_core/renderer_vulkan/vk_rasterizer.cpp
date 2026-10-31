@@ -98,6 +98,37 @@ void ProbeSampler(const Shader::Info& stage, u32 sampler_index, const AmdGpu::Sa
 }
 } // namespace
 
+/// PushData::attrib_w_zero: the integer attributes of fewer than four components, in fetch order.
+static u32 AttribWZero(const GraphicsPipelineKey& key) {
+    u32 mask = 0;
+    for (u32 i = 0; i < key.vertex_buffer_formats.size(); ++i) {
+        using Format = VideoCore::Backend::Format;
+        switch (key.vertex_buffer_formats[i]) {
+        case Format::Undefined:
+            return mask;
+        case Format::R8Uint:
+        case Format::R8Sint:
+        case Format::R8G8Uint:
+        case Format::R8G8Sint:
+        case Format::R16Uint:
+        case Format::R16Sint:
+        case Format::R16G16Uint:
+        case Format::R16G16Sint:
+        case Format::R32Uint:
+        case Format::R32Sint:
+        case Format::R32G32Uint:
+        case Format::R32G32Sint:
+        case Format::R32G32B32Uint:
+        case Format::R32G32B32Sint:
+            mask |= 1u << i;
+            break;
+        default:
+            break;
+        }
+    }
+    return mask;
+}
+
 static Shader::PushData MakeUserData(const AmdGpu::Regs& regs) {
     // TODO(roamic): Add support for multiple viewports and geometry shaders when ViewportIndex
     // is encountered and implemented in the recompiler.
@@ -2743,6 +2774,9 @@ bool Rasterizer::BindResources(const Pipeline* pipeline) {
     Shader::Backend::Bindings binding{};
     const bool stage_bindings = device.GetCapabilities().stage_bindings;
     push_data = MakeUserData(Regs());
+    if (!pipeline->IsCompute()) {
+        push_data.attrib_w_zero = AttribWZero(static_cast<const GraphicsPipeline*>(pipeline)->GetGraphicsKey());
+    }
     if (!HelperEligible(pipeline)) {
         ++helper_serial;
         for (const auto* stage : pipeline->GetStages()) {

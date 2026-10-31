@@ -14,6 +14,28 @@ struct Archive;
 
 namespace Shader::Gcn {
 
+/// bbport: a V#'s components are its format's in order and the rest what Metal's vertex fetch gives
+/// (0, 0, 1 for a float attribute; an integer one takes 0 in place of that 1 from
+/// PushData::attrib_w_zero). The shader then needs no swizzle, and so does not depend on the mesh.
+inline bool HostFillsAttribute(const AmdGpu::Buffer& sharp) {
+    const auto format = sharp.GetDataFmt();
+    if (format == AmdGpu::DataFormat::FormatInvalid) {
+        return false;
+    }
+    const u32 count = AmdGpu::NumComponents(format);
+    const auto select = sharp.DstSelect();
+    const bool integer = AmdGpu::GetNumberClass(sharp.GetNumberFmt()) != AmdGpu::NumberClass::Float;
+    for (u32 i = 0; i < 4; ++i) {
+        const auto expected = i < count ? AmdGpu::CompSwizzle(u32(AmdGpu::CompSwizzle::Red) + i)
+                              : i == 3 && !integer ? AmdGpu::CompSwizzle::One
+                                                   : AmdGpu::CompSwizzle::Zero;
+        if (select.array[i] != expected) {
+            return false;
+        }
+    }
+    return true;
+}
+
 struct VertexAttribute {
     enum InstanceIdType : u8 {
         None = 0,

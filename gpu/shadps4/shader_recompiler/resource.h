@@ -227,6 +227,7 @@ struct PushData {
     static constexpr u32 MotionParamIndex = BufOffsetIndex + NUM_BUFFERS / 16 + 1;
     static constexpr u32 SceneSizeIndex = MotionParamIndex + 1;
     static constexpr u32 MrtOrderIndex = SceneSizeIndex + 1;
+    static constexpr u32 AttribWZeroIndex = MrtOrderIndex + 2;
 
     float xoffset;
     float yoffset;
@@ -239,13 +240,15 @@ struct PushData {
     /// bbport (Profile::free_colour): for each colour target, a byte with the output channel
     /// of each exported component (two bits each), so a shader does not depend on the target.
     std::array<u32, 2> mrt_order;
+    /// bbport (Profile::free_attributes): attributes, in fetch order, whose fourth component is 0.
+    u32 attrib_w_zero;
 
     void AddOffset(u32 binding, u32 offset) {
         ASSERT(offset < 256 && binding < buf_offsets.size());
         buf_offsets[binding] = offset;
     }
 };
-static_assert(sizeof(PushData) <= 136,
+static_assert(sizeof(PushData) <= 140,
               "PushData size is greater than minimum size guaranteed by Vulkan spec");
 
 } // namespace Shader

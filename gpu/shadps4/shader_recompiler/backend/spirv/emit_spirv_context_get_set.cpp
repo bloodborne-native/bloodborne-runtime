@@ -107,6 +107,21 @@ Id EmitGetAttribute(EmitContext& ctx, IR::Attribute attr, u32 comp, u32 index) {
                 }
             }
         }();
+        if (ctx.profile.free_attributes && ctx.sw_stage == SwStage::Vertex && param.is_integer &&
+            comp == 3) {
+            // Metal gives an integer attribute with fewer components a fourth of 1, the V# 0.
+            const Id zero_mask{ctx.OpLoad(
+                ctx.U32[1], ctx.OpAccessChain(ctx.TypePointer(spv::StorageClass::PushConstant, ctx.U32[1]),
+                                              ctx.push_data_block,
+                                              ctx.ConstU32(PushData::AttribWZeroIndex)))};
+            const u32 order = ctx.attrib_order_of[param_index];
+            const Id zero{ctx.OpINotEqual(
+                ctx.U1[1], ctx.OpBitFieldUExtract(ctx.U32[1], zero_mask, ctx.ConstU32(order), ctx.ConstU32(1U)),
+                ctx.u32_zero_value)};
+            const Id kept{ctx.OpSelect(param.component_type, zero,
+                                       ctx.OpBitcast(param.component_type, ctx.u32_zero_value), value)};
+            return ctx.OpBitcast(ctx.F32[1], kept);
+        }
         return param.is_integer ? ctx.OpBitcast(ctx.F32[1], value) : value;
     }
     if (IR::IsBarycentricCoord(attr) && attr != IR::Attribute::BaryCoordPullModel &&

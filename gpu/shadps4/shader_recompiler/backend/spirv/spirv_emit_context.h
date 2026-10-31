@@ -416,6 +416,7 @@ public:
     Id output_attr_array;
     std::array<SpirvAttribute, IR::NumParams> input_params{};
     std::array<SpirvAttribute, IR::NumParams> output_params{};
+    std::array<u32, IR::NumParams> attrib_order_of{}; ///< a semantic's place in the fetch order
     std::array<SpirvAttribute, IR::NumRenderTargets> frag_outputs{};
 
     Id uf11_to_f32{};
