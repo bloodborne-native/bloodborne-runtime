@@ -521,6 +521,18 @@ session's 614 shaders compiled before play, a true first play's stalls fell from
 and the second-worst frame from 1.6 s to 0.85 s (one run), but the worst frame stayed at 3.2 s:
 what remains is mostly pipelines, which a list of shaders does not build. The step is not built.
 
+**What decides a pipeline.** The game compiles nothing while it runs: its shaders are finished
+binaries and each draw names a shader pair and its state, so only our conversion has a first use.
+212 real graphics pipelines of a cold run use 39 distinct state sets. The engine builds a
+material's shader set when it loads the material, from a fixed list of 21 passes: the pixel shader
+is the material's shader plus the pass name, with alpha variants, and the vertex shaders add
+skinning, morph, instancing and clip options, most passes using their own and a few another
+pass's. That rule gives all 85 model pipelines' pairs (matched by program hash: identical binaries
+have up to 156 file names), and 7,959 distinct model pairs in the whole game. In those 85, each
+vertex program has one vertex format set, all draw triangle lists, and each pass has one state set
+except `gbuf` (3) and `fwd` (2). The other 127 pipelines, the fixed passes, are not predicted yet;
+the engine names many of their shaders directly, and 64 use the executable's own programs.
+
 **Progress for the player.** Cache entries are named by program hash and permutation, so the step
 can list what is compiled, skip it, and show compiled of total; what play compiled counts.
 
