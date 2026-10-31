@@ -106,6 +106,38 @@ static Shader::PushData MakeUserData(const AmdGpu::Regs& regs) {
     push_data.xscale = regs.viewport_control.xscale_enable ? regs.viewports[0].xscale : 1.f;
     push_data.yoffset = regs.viewport_control.yoffset_enable ? regs.viewports[0].yoffset : 0.f;
     push_data.yscale = regs.viewport_control.yscale_enable ? regs.viewports[0].yscale : 1.f;
+    // Shader::Profile::free_colour: the output channel of each exported component. Components a
+    // target does not take get the channels left over.
+    push_data.mrt_order = {0xe4e4e4e4u, 0xe4e4e4e4u};
+    for (u32 cb = 0; cb < AmdGpu::NUM_COLOR_BUFFERS; ++cb) {
+        const auto& col_buf = regs.color_buffers[cb];
+        if (!col_buf || !regs.color_target_mask.GetMask(cb)) {
+            continue;
+        }
+        const auto swizzle = col_buf.Swizzle();
+        if (swizzle == AmdGpu::IdentityMapping) {
+            continue;
+        }
+        std::array<s32, 4> channel_of{-1, -1, -1, -1};
+        u32 taken = 0;
+        for (u32 channel = 0; channel < 4; ++channel) {
+            const u32 component = swizzle.Map(channel);
+            if (component < 4 && channel_of[component] < 0) {
+                channel_of[component] = s32(channel);
+                taken |= 1u << channel;
+            }
+        }
+        u32 order = 0;
+        for (u32 component = 0; component < 4; ++component) {
+            if (channel_of[component] < 0) {
+                channel_of[component] = std::countr_one(taken);
+                taken |= 1u << channel_of[component];
+            }
+            order |= u32(channel_of[component]) << (component * 2);
+        }
+        auto& word = push_data.mrt_order[cb / 4];
+        word = (word & ~(0xffu << (cb % 4 * 8))) | (order << (cb % 4 * 8));
+    }
     return push_data;
 }
 

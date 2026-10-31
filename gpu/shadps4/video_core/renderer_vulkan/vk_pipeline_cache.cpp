@@ -247,6 +247,21 @@ const Shader::RuntimeInfo& PipelineCache::BuildRuntimeInfo(PipelineSelection& se
         }
         for (u32 i = 0; i < Shader::MaxColorBuffers; i++) {
             info.hw.fs.color_buffers[i] = sel.graphics_key.color_buffers[i];
+            if (profile.free_colour && !info.hw.fs.dual_source_blending) {
+                // One shader for every target: the export format is the shader's own (its
+                // header gives the same value), only the number type shapes the output, and the
+                // channel order comes with the draw (PushData::mrt_order).
+                auto& color_buffer = info.hw.fs.color_buffers[i];
+                const auto number_class = AmdGpu::GetNumberClass(color_buffer.num_format);
+                color_buffer.export_format = regs.color_export_format.GetFormat(i);
+                color_buffer.data_format = AmdGpu::DataFormat::FormatInvalid;
+                color_buffer.num_format = number_class == AmdGpu::NumberClass::Uint
+                                              ? AmdGpu::NumberFormat::Uint
+                                          : number_class == AmdGpu::NumberClass::Sint
+                                              ? AmdGpu::NumberFormat::Sint
+                                              : AmdGpu::NumberFormat::Float;
+                color_buffer.swizzle = AmdGpu::IdentityMapping;
+            }
         }
         // Lowered user clip planes ride the same emulation path as guest-exported distances, so
         // the fragment side arms whenever the hardware vertex stage lowers them, keeping its input

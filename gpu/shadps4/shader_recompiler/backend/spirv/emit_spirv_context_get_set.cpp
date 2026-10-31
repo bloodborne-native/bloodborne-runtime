@@ -315,6 +315,16 @@ void EmitSetAttribute(EmitContext& ctx, IR::Attribute attr, Id value, u32 elemen
             // Emulates GCN's factor-scaled min/max blend: min/max(src*src, dst*dst).
             value = ctx.OpFMul(ctx.F32[1], value, value);
         }
+        if (ctx.FreeColour()) {
+            const Id word{ctx.OpLoad(
+                ctx.U32[1], ctx.OpAccessChain(ctx.TypePointer(spv::StorageClass::PushConstant, ctx.U32[1]),
+                                              ctx.push_data_block,
+                                              ctx.ConstU32(PushData::MrtOrderIndex + index / 4)))};
+            const Id channel{ctx.OpBitFieldUExtract(ctx.U32[1], word,
+                                                    ctx.ConstU32((index % 4) * 8 + element * 2),
+                                                    ctx.ConstU32(2U))};
+            return op_store(ctx.OpAccessChain(info.pointer_type, info.id, channel));
+        }
         if (info.num_components == 1) {
             return op_store(info.id);
         } else {

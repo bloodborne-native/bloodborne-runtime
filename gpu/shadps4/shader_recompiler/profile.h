@@ -52,6 +52,7 @@ struct Profile {
     bool needs_lds_barriers{};
     bool needs_buffer_offsets{};
     bool stage_bindings{}; ///< bbport: Backend::Bindings::EnterStage
+    bool free_colour{};    ///< bbport: colour exports independent of the target (PushData::mrt_order)
     bool needs_unorm_fixup{};
     bool needs_clip_distance_emulation{};
     bool supports_shader_stencil_export{};

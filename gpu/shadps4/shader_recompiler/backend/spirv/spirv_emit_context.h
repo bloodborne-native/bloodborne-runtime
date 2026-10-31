@@ -264,6 +264,11 @@ public:
         return sw_stage == SwStage::Vertex && hw_stage == HwStage::Vertex &&
                runtime_info.hw.vs.motion_vectors && MotionVectors::positions_address != 0;
     }
+    /// bbport: the channel of a colour export comes with the draw (PushData::mrt_order).
+    [[nodiscard]] bool FreeColour() const {
+        return profile.free_colour && !runtime_info.hw.fs.dual_source_blending;
+    }
+
     [[nodiscard]] bool FragmentMotion() const {
         return sw_stage == SwStage::Fragment && runtime_info.hw.fs.motion_vectors;
     }

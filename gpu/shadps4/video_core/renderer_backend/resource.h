@@ -288,6 +288,7 @@ struct Capabilities {
     u64 uniform_min_alignment{1}; ///< of uniform buffer binding offsets
     u64 storage_min_alignment{1}; ///< of storage buffer binding offsets
     bool stage_bindings{};
+    bool free_colour{};
     bool integrated{};            ///< the GPU shares the CPU's memory
     bool memory_report{};         ///< Device::ReportMemory has usage and budget (a driver query)
     bool tessellation{};

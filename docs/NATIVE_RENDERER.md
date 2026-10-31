@@ -496,8 +496,9 @@ and attributes and colours are still real). What the header holds:
 - Pixel input order, with no vertex partner needed: each pixel shader's table of input semantics,
   minus the first export semantic, gives all 104 programs with files (the tables were not checked
   on the executable's programs).
-- Colour export formats, one nibble per target: 138 of 147 pixel variants. The other 9 declare an
-  output in a draw with no colour target, so a pixel shader needs two candidates at most.
+- Colour export formats, one nibble per target: 138 of 147 pixel variants. The other 9 declared an
+  output in a draw with no colour target; on Metal a pixel shader now always exports what it
+  declares, and a target that is not bound ignores it, so there is one form.
 - Vertex inputs (semantic, register, declared size): the table is there in all 130 programs. The
   declared size is not the mesh's: components taken from it alone keep 56 of 99 vertex variants,
   and classes alone cost far less (263 of 282 overall, against 227 with both from the list).
@@ -506,8 +507,12 @@ and attributes and colours are still real). What the header holds:
   34 fit with no names, and most of the rest declare 4 components where the mesh supplies 2.
 
 Images that are cubes come from the code: V_CUBEID's result reaches the sample's coordinates, right
-in 280 of 282 variants. A colour target needs only its number class and swizzle. Still to supply:
-vertex attributes' components and classes where the rules above miss.
+in 280 of 282 variants. A colour target needs only its number class: on Metal a pixel shader exports
+four channels and each draw says where each component goes (`PushData::mrt_order`), so the channel
+order is no longer part of a shader. One alternating pair showed no FPS cost and the same picture,
+and a first play in Iosefka's Clinic has 283 programs and 24 extra variants, none of them from
+colour (compute formats 16, images in pixel shaders 5, vertex 3). Still to supply: vertex
+attributes' components and classes where the rules above miss.
 
 **A list from the files, measured.** A local prototype translated programs from the game's files
 before play, with up to four candidates each, and looked every real variant up by its SPIR-V: 186

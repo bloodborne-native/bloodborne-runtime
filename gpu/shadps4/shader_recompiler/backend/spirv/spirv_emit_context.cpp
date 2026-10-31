@@ -756,7 +756,8 @@ void EmitContext::DefineOutputs() {
             if (!info.stores.GetAny(mrt)) {
                 continue;
             }
-            const u32 num_components = info.stores.NumComponents(mrt);
+            // Four channels: PushData::mrt_order may send a component to any of them.
+            const u32 num_components = FreeColour() ? 4 : info.stores.NumComponents(mrt);
             const AmdGpu::NumberFormat num_format{runtime_info.hw.fs.color_buffers[i].num_format};
             const Id type{GetAttributeType(*this, num_format)[num_components]};
             Id id;
@@ -804,7 +805,7 @@ void EmitContext::DefineOutputs() {
 void EmitContext::DefinePushDataBlock() {
     // Create push constants block for instance steps rates
     const Id struct_type{Name(TypeStruct(F32[1], F32[1], F32[1], F32[1], U32[4], U32[4], U32[4],
-                                         U32[4], U32[4], U32[4], U32[2], U32[1], U32[1]),
+                                         U32[4], U32[4], U32[4], U32[2], U32[1], U32[1], U32[1], U32[1]),
                               "AuxData")};
     Decorate(struct_type, spv::Decoration::Block);
     MemberName(struct_type, PushData::XOffsetIndex, "xoffset");
@@ -833,6 +834,10 @@ void EmitContext::DefinePushDataBlock() {
     MemberDecorate(struct_type, PushData::MotionParamIndex, spv::Decoration::Offset, 120U);
     MemberName(struct_type, PushData::SceneSizeIndex, "scene_size");
     MemberDecorate(struct_type, PushData::SceneSizeIndex, spv::Decoration::Offset, 124U);
+    MemberName(struct_type, PushData::MrtOrderIndex + 0, "mrt_order0");
+    MemberDecorate(struct_type, PushData::MrtOrderIndex + 0, spv::Decoration::Offset, 128U);
+    MemberName(struct_type, PushData::MrtOrderIndex + 1, "mrt_order1");
+    MemberDecorate(struct_type, PushData::MrtOrderIndex + 1, spv::Decoration::Offset, 132U);
     push_data_block = DefineVar(struct_type, spv::StorageClass::PushConstant);
     Name(push_data_block, "push_data");
     interfaces.push_back(push_data_block);
