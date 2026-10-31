@@ -510,9 +510,11 @@ Images that are cubes come from the code: V_CUBEID's result reaches the sample's
 in 280 of 282 variants. A colour target needs only its number class: on Metal a pixel shader exports
 four channels and each draw says where each component goes (`PushData::mrt_order`), so the channel
 order is no longer part of a shader. One alternating pair showed no FPS cost and the same picture,
-and a first play in Iosefka's Clinic has 283 programs and 24 extra variants, none of them from
-colour (compute formats 16, pixel images 4, vertex 4). Still to supply: vertex
-attributes' components and classes where the rules above miss.
+and none of a first play's extra variants comes from colour. Vertex keys no longer hold step rates
+a shader cannot read or the tessellation flag when it has no output map. A first play in Iosefka's
+Clinic now has 260 programs and 21 extra variants: 15 compute formats, 3 pixel images, 3 vertex.
+Clip-disable stays a real difference, because a rect list converts the position in the shader.
+Still to supply: vertex attributes' components and classes where the rules above miss.
 
 **A list from the files, measured.** A local prototype translated programs from the game's files
 before play, with up to four candidates each, and looked every real variant up by its SPIR-V: 186

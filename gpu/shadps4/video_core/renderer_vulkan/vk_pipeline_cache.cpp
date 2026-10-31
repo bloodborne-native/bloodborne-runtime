@@ -296,14 +296,17 @@ const Shader::RuntimeInfo& PipelineCache::BuildRuntimeInfo(PipelineSelection& se
     }
     switch (l_stage) {
     case SwStage::Vertex:
-        info.sw.vs.step_rate_0 = regs.vgt_instance_step_rate_0;
-        info.sw.vs.step_rate_1 = regs.vgt_instance_step_rate_1;
+        // Only a shader that reads the instance index sees these: the rest stay one shader.
+        info.sw.vs.step_rate_0 = info.props.num_input_vgprs > 0 ? regs.vgt_instance_step_rate_0 : 0;
+        info.sw.vs.step_rate_1 = info.props.num_input_vgprs > 1 ? regs.vgt_instance_step_rate_1 : 0;
         info.sw.vs.vertex_sgpr_offset = sel.draw_indirect_params.vertex_sgpr_offset;
         info.sw.vs.instance_sgpr_offset = sel.draw_indirect_params.instance_sgpr_offset;
         // The key's type: a quad list drawn as triangles has an ordinary vertex stage.
+        // It changes only exports through the output map.
         info.sw.vs.tess_emulated_primitive =
-            sel.graphics_key.prim_type == AmdGpu::PrimitiveType::RectList ||
-            sel.graphics_key.prim_type == AmdGpu::PrimitiveType::QuadList;
+            (stage != HwStage::Vertex || info.hw.vs.num_outputs != 0) &&
+            (sel.graphics_key.prim_type == AmdGpu::PrimitiveType::RectList ||
+             sel.graphics_key.prim_type == AmdGpu::PrimitiveType::QuadList);
         break;
     case SwStage::TessellationControl: {
         info.sw.tcs.num_input_control_points = regs.ls_hs_config.hs_input_control_points;
