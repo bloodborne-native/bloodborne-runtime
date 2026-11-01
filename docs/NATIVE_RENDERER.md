@@ -649,8 +649,13 @@ any window of play; pipelines are made at first use, most while loading (1.9 s w
 run). The stopped run's record held 97 hashes the next run did not make, so some translations
 differ between runs; the cause is open. 167 vertex programs stop the translator and are skipped.
 
-**Pipelines in the step.** The engine's render state could not be located by reading the
-executable, so it comes from the player's own sessions. With the setting on, each pipeline a session
+**Pipelines in the step.** The render state is not in the shader bundles. The engine keeps it in
+objects whose layout is known (`CgBlendState`, `CgDepthStencilState`, `CgRasterizerState`, in
+bloodborne-recomp's `annotations/structs.h`); the rules that fill them are not traced yet, so for
+now the state comes from the player's own sessions. Each of the game's 304 material files
+(`mtd/allmaterialbnd.mtdbnd.dcx`) names its shader and blend mode. Of 308 pipelines of one session,
+158 are model pipelines with 13 states, and most of the difference within a pass is the topology, so
+a model's state follows from a few pass rules; the other 150 are fixed passes. With the setting on, each pipeline a session
 builds or loads is noted in the cache's `pipelines-seen.bin`. The next compile (`vk_pipeline_ahead`)
 pairs shaders from the game's files (model shaders by file name and pass, the rest by a vertex
 shader that exports what a pixel shader reads) and gives each pair the two states most used by its
