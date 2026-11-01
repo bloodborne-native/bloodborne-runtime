@@ -9,7 +9,7 @@
 
 namespace Serialization {
 /// Metal: no buffer offset table, each stage's bindings; shaders independent of targets and meshes.
-inline constexpr u32 ShaderBinaryVersion = 27u;
+inline constexpr u32 ShaderBinaryVersion = 28u;
 } // namespace Serialization
 
 namespace Vulkan {

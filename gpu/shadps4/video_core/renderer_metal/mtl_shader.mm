@@ -12,17 +12,20 @@
 #include <xxhash.h>
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <map>
+#include <mutex>
 #include <span>
 #include <sstream>
 #include <stdexcept>
 #include <system_error>
 #include <tuple>
+#include <unordered_map>
 #include <unistd.h>
 
 #include <spirv_cross/spirv_msl.hpp>
@@ -805,6 +808,47 @@ struct MetalObjects {
     std::string error; ///< empty on success
 };
 
+/// The text of `msl` with SPIRV-Cross' numbered names renumbered in order of first use, and its
+/// function named after the result: translations that differ only in those numbers become one text,
+/// which the step's build of a shader and play's build of it share (Metal keys its cache on text).
+void CanonicalizeMsl(std::string& msl, std::string& entry) {
+    static constexpr std::string_view placeholder = "BB_CANONICAL_ENTRY";
+    const auto replace = [](std::string& text, std::string_view from, std::string_view to) {
+        std::string out;
+        out.reserve(text.size());
+        size_t pos = 0;
+        for (size_t hit; (hit = text.find(from, pos)) != std::string::npos; pos = hit + from.size()) {
+            out.append(text, pos, hit - pos).append(to);
+        }
+        text = std::move(out.append(text, pos));
+    };
+    const auto is_word = [](char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; };
+    replace(msl, entry, placeholder);
+    std::unordered_map<std::string, u32> numbers;
+    std::string out;
+    out.reserve(msl.size());
+    for (size_t i = 0; i < msl.size();) {
+        size_t end = i + 1;
+        if (msl[i] == '_' && (i == 0 || (!is_word(msl[i - 1]) && msl[i - 1] != '.'))) {
+            while (end < msl.size() && std::isdigit(static_cast<unsigned char>(msl[end]))) {
+                ++end;
+            }
+            if (end > i + 1 && (end == msl.size() || !is_word(msl[end]))) {
+                const auto [it, added] = numbers.try_emplace(msl.substr(i, end - i), u32(numbers.size()));
+                out += fmt::format("_{}", it->second);
+                i = end;
+                continue;
+            }
+        }
+        out.append(msl, i, end - i);
+        i = end;
+    }
+    const size_t stage_end = entry.rfind('_', entry.rfind('_') - 1);
+    entry = fmt::format("{}_{:016x}", entry.substr(0, stage_end), XXH3_64bits(out.data(), out.size()));
+    replace(out, placeholder, entry);
+    msl = std::move(out);
+}
+
 /// The first "error:" line of a Metal compiler message, without the "program_source:L:C:" prefix.
 std::string FirstMetalError(const std::string& text) {
     size_t pos = 0;
@@ -880,6 +924,27 @@ MetalObjects BuildLibrary(id<MTLDevice> device, const std::string& msl, const st
         }
         objects.library = library;
         objects.function = function;
+    }
+    return objects;
+}
+
+/// The library of each text, kept: the binary archive must never see the same function in two
+/// libraries (Convert).
+MetalObjects SharedLibrary(id<MTLDevice> device, const std::string& msl, const std::string& entry,
+                           std::string_view label) {
+    static std::mutex mutex;
+    static std::unordered_map<std::string, MetalObjects> libraries;
+    {
+        std::lock_guard lock{mutex};
+        if (const auto it = libraries.find(entry); it != libraries.end()) {
+            ++bb_list_shaders_done; // counted by the compile step, as a build is
+            return it->second;
+        }
+    }
+    MetalObjects objects = BuildLibrary(device, msl, entry, label);
+    if (objects.error.empty()) {
+        std::lock_guard lock{mutex};
+        return libraries.try_emplace(entry, objects).first->second;
     }
     return objects;
 }
@@ -1064,7 +1129,7 @@ CompileResult ShaderCompiler::Compile(std::span<const u32> spirv, u64 hash, std:
             CompiledShader parsed;
             std::string cached_msl;
             if (ParseCache(text, parsed, cached_msl) && parsed.stage == scan.stage) {
-                objects = BuildLibrary(mtl_device, cached_msl, parsed.entry, label);
+                objects = SharedLibrary(mtl_device, cached_msl, parsed.entry, label);
                 if (objects.error.empty()) {
                     shader->entry = std::move(parsed.entry);
                     shader->bindings = std::move(parsed.bindings);
@@ -1110,7 +1175,8 @@ CompileResult ShaderCompiler::Compile(std::span<const u32> spirv, u64 hash, std:
         } catch (const std::exception& e) {
             return fail(CompileStatus::Failed, "SPIRV-Cross: " + FirstLine(e.what()));
         }
-        objects = BuildLibrary(mtl_device, msl, shader->entry, label);
+        CanonicalizeMsl(msl, shader->entry);
+        objects = SharedLibrary(mtl_device, msl, shader->entry, label);
         if (!objects.error.empty()) {
             return fail(CompileStatus::Failed, objects.error);
         }

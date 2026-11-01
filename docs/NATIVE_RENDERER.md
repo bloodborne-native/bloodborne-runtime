@@ -677,6 +677,13 @@ the mixes of a program's formatted buffers and images (bounded at 2,000 per prog
 lists past that); sources that come out the same are one. In one Clinic session 33 of the 34 compute
 forms played were built ahead, up from 26. Compute shaders are the only stage done this way.
 
+Two translations of a shader can differ only in SPIRV-Cross' numbered names. On Metal, the text is
+renumbered in order of first use and the function is named after it, so such translations are one
+text, one library and one entry in Metal's cache (`CanonicalizeMsl`; a text must stay in one library,
+for the binary archive). After the step, 253 of the 295 sources one Clinic session compiled were
+already built: 132 of 136 fragment and 83 of 93 vertex sources; the rest are the runtime's own
+kernels, tessellation stages, and vertex and fragment forms that still differ.
+
 The render state itself lives in engine objects (`CgBlendState`, `CgDepthStencilState`,
 `CgRasterizerState`, in bloodborne-recomp's `annotations/structs.h`). The engine creates its
 targets and states early: by the 2,000th draw 175 of the final 177 colour targets and all 89 depth
