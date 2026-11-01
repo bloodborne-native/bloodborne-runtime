@@ -284,6 +284,13 @@ struct Info : InfoPersistent {
     const std::vector<u32>* flat_override{};
     bool list_mode{};
     u32 list_stride{}, list_data_format{}, list_num_format{}, list_image_type{}, list_swizzle{};
+    /// One binding's guess, by resource index, over the single guess above (0 stride or type: none).
+    struct ListBinding {
+        u32 stride, data_format, num_format, swizzle, image_type;
+    };
+    const ListBinding* list_buffers{};
+    const ListBinding* list_images{};
+    static constexpr size_t ListBindings = 16;
     const u64* list_cubes{};
     u64 list_found_cubes{};
     std::vector<const void*> list_cube_insts{};

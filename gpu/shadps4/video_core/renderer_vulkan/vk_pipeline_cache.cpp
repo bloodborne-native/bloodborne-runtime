@@ -1356,6 +1356,14 @@ struct AheadShader {
     std::vector<u32> spirv;
 };
 static std::vector<AheadShader> ahead_queue;
+// Bindings can each hold something else (a copy between two formats, a volume written from a
+// plane): the last translation's shape, and the guess for each binding of the next one.
+static struct {
+    std::vector<u32> buffers; // resource indices of the formatted buffers
+    std::vector<bool> images; // written?
+} list_shape;
+static const Shader::Info::ListBinding* list_buffers{};
+static const Shader::Info::ListBinding* list_images{};
 static std::unordered_map<u64, u64> program_spirv; ///< a program's first SPIR-V
 static std::array<u32, 4> list_format{};
 static u32 list_image = 0;
@@ -1451,6 +1459,89 @@ static void BuildPlanned(std::span<const AheadPipeline> planned, u32 states,
     std::fflush(stdout);
 }
 
+// Every mix of what a program's bindings can hold, while the mixes are few enough; past that, the
+// shortest lists of what programs of that size use. The sources that come out the same are one.
+template <typename Translate>
+static void TranslateBindingForms(const decltype(list_shape)& shape, Translate&& translate) {
+    using Binding = Shader::Info::ListBinding;
+    static constexpr std::array<Binding, 8> buffer_forms{{{4, 4, 4, 0x4000, 0}, {4, 4, 7, 0x4001, 0},
+        {16, 14, 7, 0x4567, 0}, {12, 13, 4, 0x4560, 0}, {4, 0, 1, 0x6547, 0}, {4, 10, 0, 0x6547, 0},
+        {4, 10, 0, 0x4567, 0}, {8, 11, 7, 0x4501, 0}}};
+    static constexpr std::array<std::array<u32, 3>, 3> read_formats{{{10, 0, 0x4567}, {4, 4, 0x4000}, {4, 5, 0x4000}}};
+    static constexpr std::array<std::array<u32, 3>, 10> written_formats{{{10, 0, 0x4567}, {10, 0, 0x6547},
+        {10, 9, 0x6547}, {10, 4, 0x4567}, {4, 7, 0x4001}, {5, 7, 0x4501}, {5, 0, 0x4501}, {6, 7, 0x4561},
+        {11, 7, 0x4501}, {14, 7, 0x4567}}};
+    static constexpr std::array<u32, 3> types{9, 13, 10};
+    constexpr u64 limit = 2000;
+    const size_t bufs = std::min(shape.buffers.size(), Shader::Info::ListBindings);
+    const size_t imgs = std::min(shape.images.size(), Shader::Info::ListBindings);
+    const auto forms = [&](bool narrow) {
+        std::vector<std::vector<Binding>> all;
+        for (size_t i = 0; i < bufs; ++i) {
+            all.emplace_back(buffer_forms.begin(), buffer_forms.begin() + (narrow ? 3 : buffer_forms.size()));
+        }
+        for (size_t i = 0; i < imgs; ++i) {
+            auto& list = all.emplace_back();
+            const bool written = shape.images[i];
+            for (const u32 type : types) {
+                if (narrow && type != types[0]) {
+                    continue;
+                }
+                if (written) {
+                    for (const auto& f : written_formats) {
+                        list.push_back({1, f[0], f[1], f[2], type});
+                    }
+                } else {
+                    for (size_t r = 0; r < (narrow ? 1 : read_formats.size()); ++r) {
+                        list.push_back({1, read_formats[r][0], read_formats[r][1], read_formats[r][2], type});
+                    }
+                }
+            }
+        }
+        return all;
+    };
+    const auto count = [&](const auto& all) {
+        u64 total = 1;
+        for (const auto& list : all) {
+            total = std::min<u64>(total * list.size(), limit * limit);
+        }
+        return total;
+    };
+    auto all = forms(false);
+    if (count(all) > limit) {
+        all = forms(true);
+    }
+    if (count(all) > limit) {
+        return;
+    }
+    std::array<Binding, Shader::Info::ListBindings> by_buffer{}, by_image{};
+    list_buffers = by_buffer.data();
+    list_images = by_image.data();
+    std::vector<size_t> at(all.size());
+    for (;;) {
+        for (size_t i = 0; i < all.size(); ++i) {
+            if (i < bufs) {
+                by_buffer[shape.buffers[i]] = all[i][at[i]];
+            } else {
+                by_image[i - bufs] = all[i][at[i]];
+            }
+        }
+        translate();
+        size_t i = 0;
+        for (; i < all.size(); ++i) {
+            if (++at[i] < all[i].size()) {
+                break;
+            }
+            at[i] = 0;
+        }
+        if (i == all.size()) {
+            break;
+        }
+    }
+    list_buffers = nullptr;
+    list_images = nullptr;
+}
+
 __attribute__((noinline)) int PipelineCache::TranslateForCompile(HwStage hw, SwStage sw,
                                                            const Shader::ShaderParams& params,
                                                            Shader::RuntimeInfo& rt,
@@ -1476,12 +1567,24 @@ __attribute__((noinline)) int PipelineCache::TranslateForCompile(HwStage hw, SwS
     guess.list_num_format = list_format[2];
     guess.list_image_type = list_image;
     guess.list_swizzle = list_format[3];
+    guess.list_buffers = list_buffers;
+    guess.list_images = list_images;
     Shader::Backend::Bindings next{};
     if (sw != SwStage::Compute) {
         next.EnterStage(u32(sw));
     }
     try {
         const auto ir = Shader::TranslateProgram(code, ahead_pools, guess, rt, profile);
+        list_shape.buffers.clear();
+        for (const auto& buffer : guess.buffers) {
+            if (buffer.is_formatted && list_shape.buffers.size() < Shader::Info::ListBindings) {
+                list_shape.buffers.push_back(u32(&buffer - guess.buffers.data()));
+            }
+        }
+        list_shape.images.clear();
+        for (const auto& image : guess.images) {
+            list_shape.images.push_back(image.is_written);
+        }
         const auto spv = Shader::Backend::SPIRV::EmitSPIRV(profile, rt, ir, next);
         const u64 spirv_hash = XXH3_64bits(spv.data(), spv.size() * 4);
         program_spirv.try_emplace(params.hash, spirv_hash);
@@ -1591,6 +1694,7 @@ void PipelineCache::CompileAheadWork() {
             static const std::array<u32, 5> images{9, 13, 10, 8, 12};
             const std::span<const u32> code{blob.data() + offset / 4, length / 4};
             ++programs;
+            std::optional<decltype(list_shape)> shape;
             for (const auto& format : formats) {
                 for (const u32 image : images) {
                     Shader::RuntimeInfo rt{};
@@ -1617,8 +1721,40 @@ void PipelineCache::CompileAheadWork() {
                     list_image = 0;
                     if (why != 0) {
                         ++(why == 2 ? asserts : why == 3 ? exceptions : faults);
+                    } else if (!shape) {
+                        shape = list_shape;
                     }
                 }
+            }
+            if (shape && shape->buffers.size() + shape->images.size() >= 2) {
+                const auto translate = [&] {
+                    Shader::RuntimeInfo rt{};
+                    rt.Initialize(HwStage::Compute, SwStage::Compute);
+                    rt.props.num_user_data = (rsrc2 >> 1) & 0x1f;
+                    rt.props.num_allocated_vgprs = (rsrc1 & 0x3f) * 4;
+                    rt.props.fp_round_mode32 = AmdGpu::FpRoundMode((rsrc1 >> 12) & 3);
+                    rt.props.fp_round_mode16_64 = AmdGpu::FpRoundMode((rsrc1 >> 14) & 3);
+                    rt.props.fp_denorm_mode32 = AmdGpu::FpDenormMode((rsrc1 >> 16) & 3);
+                    rt.props.fp_denorm_mode16_64 = AmdGpu::FpDenormMode((rsrc1 >> 18) & 3);
+                    rt.hw.cs.workgroup_size = {z_format, col, en};
+                    rt.hw.cs.tgid_enable = {bool(rsrc2 >> 7 & 1), bool(rsrc2 >> 8 & 1), bool(rsrc2 >> 9 & 1)};
+                    const Shader::ShaderParams params{
+                        .user_data = std::span<const u32, Shader::ShaderParams::NumShaderUserData>{
+                            zero_ud.data(), Shader::ShaderParams::NumShaderUserData},
+                        .code = code,
+                        .hash = hash,
+                    };
+                    list_format = formats[0];
+                    list_image = images[0];
+                    watch_ticket.fetch_add(1);
+                    const int why = TranslateForCompile(HwStage::Compute, SwStage::Compute, params, rt, code, nullptr, nullptr);
+                    if (why != 0) {
+                        ++(why == 2 ? asserts : why == 3 ? exceptions : faults);
+                    }
+                };
+                TranslateBindingForms(*shape, translate);
+                list_format = {};
+                list_image = 0;
             }
             continue;
         }

@@ -120,7 +120,7 @@ struct StageSpecialization {
         u32 binding{};
         ForEachSharp(binding, buffers, info->buffers,
                      [&profile_](auto& spec, const auto& desc, AmdGpu::Buffer sharp) {
-                         spec.stride = sharp.GetStride();
+                         spec.stride = desc.runtime_stride ? 0 : sharp.GetStride();
                          spec.paged = IsPagedBuffer(profile_.paged_buffers, sharp);
                          spec.is_formatted = desc.is_formatted;
                          spec.swizzle_enable = sharp.swizzle_enable;

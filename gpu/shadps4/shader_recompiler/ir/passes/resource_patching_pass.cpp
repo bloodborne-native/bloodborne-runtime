@@ -572,7 +572,7 @@ void PatchGlobalDataShareAccess(IR::Inst& inst, Info& info, Descriptors& descrip
 }
 
 IR::U32 CalculateBufferAddress(IR::IREmitter& ir, const IR::Inst& inst, const Info& info,
-                               const AmdGpu::Buffer& buffer, u32 stride) {
+                               const AmdGpu::Buffer& buffer, u32 stride, u32 stride_dword = 0) {
     const auto inst_info = inst.Flags<IR::BufferInstInfo>();
     const u32 inst_offset = inst_info.inst_offset.Value();
     const auto is_inst_typed = inst_info.inst_data_fmt != AmdGpu::DataFormat::FormatInvalid;
@@ -585,8 +585,8 @@ IR::U32 CalculateBufferAddress(IR::IREmitter& ir, const IR::Inst& inst, const In
 
     // If address calculation is of the form "index * const_stride + offset" with offset constant
     // and both const_stride and offset are divisible with the element size, apply shift directly.
-    if (inst_info.index_enable && !inst_info.voffset_enable && soffset.IsImmediate() &&
-        !buffer.swizzle_enable && !buffer.add_tid_enable && (stride & mask) == 0) {
+    if (stride_dword == 0 && inst_info.index_enable && !inst_info.voffset_enable &&
+        soffset.IsImmediate() && !buffer.swizzle_enable && !buffer.add_tid_enable && (stride & mask) == 0) {
         const u32 total_offset = soffset.U32() + inst_offset;
         if ((total_offset & mask) == 0) {
             // buffer_offset = index * (const_stride >> shift) + (offset >> shift)
@@ -615,7 +615,13 @@ IR::U32 CalculateBufferAddress(IR::IREmitter& ir, const IR::Inst& inst, const In
         const IR::U32 voffset = IR::GetBufferVOffsetArg(&inst);
         offset = ir.IAdd(offset, voffset);
     }
-    const IR::U32 const_stride = ir.Imm32(stride);
+    IR::U32 const_stride = ir.Imm32(stride);
+    if (stride_dword != 0) {
+        // The sharp's second dword, in the flat data: the same source for every stride.
+        const IR::U32 dword = ir.ReadConst(ir.CompositeConstruct(ir.Imm32(0U), ir.Imm32(0U)), ir.Imm32(0U));
+        dword.Inst()->SetFlags(stride_dword);
+        const_stride = ir.BitFieldExtract(dword, ir.Imm32(16U), ir.Imm32(14U));
+    }
     IR::U32 buffer_offset;
     if (buffer.swizzle_enable) {
         const IR::U32 const_index_stride = ir.Imm32(buffer.GetIndexStride());
@@ -647,9 +653,32 @@ IR::U32 CalculateBufferAddress(IR::IREmitter& ir, const IR::Inst& inst, const In
     return buffer_offset;
 }
 
+// Compute shaders index structures whose size the game alone knows, and nothing in the code tells
+// them from plain arrays: the stride is read from the sharp when the shader runs, so a size is not
+// one more form of the shader to compile.
+void MarkRuntimeStrides(const ResourceDiscoveryList& resources, Info& info) {
+    if (info.sw_stage != SwStage::Compute) {
+        return;
+    }
+    for (const auto& usage : resources) {
+        const IR::Inst& inst = *usage.user;
+        if (!IsBufferInstruction(inst) || inst.GetOpcode() == IR::Opcode::ReadConstBuffer) {
+            continue;
+        }
+        const auto inst_info = inst.Flags<IR::BufferInstInfo>();
+        auto& res = info.buffers[inst.Arg(0).U32()];
+        const auto buffer = res.GetSharp(info);
+        if (inst_info.index_enable && (res.sharp_fetch.load_mask >> 1 & 1) != 0 &&
+            !buffer.swizzle_enable && res.post_op == SharpFetchPostOp::None &&
+            res.sharp_fetch.offsets[1] != UNKNOWN_LOCATION) {
+            res.runtime_stride = true;
+        }
+    }
+}
+
 void PatchBufferArgs(IR::Inst& inst, Info& info) {
     const auto handle = inst.Arg(0);
-    const auto buffer_res = info.buffers[handle.U32()];
+    const auto& buffer_res = info.buffers[handle.U32()];
     const auto buffer = buffer_res.GetSharp(info);
 
     // Address of constant buffer reads can be calculated at IR emission time.
@@ -657,9 +686,11 @@ void PatchBufferArgs(IR::Inst& inst, Info& info) {
         return;
     }
 
+    const bool indexed = inst.Flags<IR::BufferInstInfo>().index_enable || buffer.add_tid_enable;
+    const u32 stride_dword = buffer_res.runtime_stride && indexed ? buffer_res.sharp_fetch.offsets[1] : 0;
     IR::IREmitter ir{*inst.GetParent(), IR::Block::InstructionList::s_iterator_to(inst)};
     inst.SetArg(IR::LoadBufferArgs::Address,
-                CalculateBufferAddress(ir, inst, info, buffer, buffer.stride));
+                CalculateBufferAddress(ir, inst, info, buffer, buffer.stride, stride_dword));
 }
 
 IR::Value FixCubeCoords(IR::IREmitter& ir, const AmdGpu::Image& image, const IR::Value& x,
@@ -978,6 +1009,8 @@ void ResourcePatchingPass(Shader::Info& info, const ResourceDiscoveryList& resou
             PatchImageSharp(usage, info, descriptors, profile);
         }
     }
+
+    MarkRuntimeStrides(resources, info);
 
     // Pass 2: Patch instruction args
     for (const auto& usage : resources) {

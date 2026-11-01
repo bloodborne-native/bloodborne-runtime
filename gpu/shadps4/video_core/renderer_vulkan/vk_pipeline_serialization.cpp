@@ -18,7 +18,7 @@
 
 namespace Serialization {
 /* You should increment versions below once corresponding serialization scheme is changed. */
-static constexpr u32 ShaderMetaVersion = 9u; // fixed quad local output map in InfoPersistent
+static constexpr u32 ShaderMetaVersion = 10u; // fixed quad local output map in InfoPersistent
 static constexpr u32 PipelineKeyVersion = 6u; // fixed quad vertex pipeline key
 } // namespace Serialization
 

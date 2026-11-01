@@ -669,6 +669,14 @@ seen, so that what the rules miss is still built. `BB_PIPELINE_PLAN_CHECK=<file 
 308 of one Clinic session. Unused colour slots hold stale registers that no backend reads, and the
 check ignores them.
 
+A compute shader's form depends on what each of its bindings holds, and a game's copies, clears and
+effects mix them. Two things keep that small. An indexed compute buffer reads its stride from the
+sharp in the flat data when the shader runs, so the game's structure sizes are not forms at all; the
+copy and clear replacements do not count the flat buffer those shaders then bind. And the step tries
+the mixes of a program's formatted buffers and images (bounded at 2,000 per program, with shorter
+lists past that); sources that come out the same are one. In one Clinic session 33 of the 34 compute
+forms played were built ahead, up from 26. Compute shaders are the only stage done this way.
+
 The render state itself lives in engine objects (`CgBlendState`, `CgDepthStencilState`,
 `CgRasterizerState`, in bloodborne-recomp's `annotations/structs.h`). The engine creates its
 targets and states early: by the 2,000th draw 175 of the final 177 colour targets and all 89 depth

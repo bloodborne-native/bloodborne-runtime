@@ -3470,6 +3470,13 @@ size_t ShaderBufferCount(const Shader::Info& info) {
         info.buffers.back().buffer_type == Shader::BufferType::BdaPagetable) {
         --count;
     }
+    // A flat buffer there only for run-time strides: the shader this count replaces never runs.
+    const bool stride_only =
+        std::any_of(info.buffers.begin(), info.buffers.end(),
+                    [](const auto& desc) { return desc.runtime_stride; });
+    if (count != 0 && stride_only && info.buffers[count - 1].buffer_type == Shader::BufferType::Flatbuf) {
+        --count;
+    }
     return count;
 }
 } // namespace

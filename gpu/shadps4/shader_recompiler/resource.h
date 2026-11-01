@@ -81,6 +81,7 @@ struct BufferResource {
     BufferType buffer_type{};
     bool is_written{};
     bool is_formatted{};
+    bool runtime_stride{}; ///< The shader reads the stride from the sharp: not part of its form.
     SharpFetchPostOp post_op{};
     u32 post_op_dw1_mask{};
 
@@ -100,14 +101,25 @@ struct BufferResource {
             b.dst_sel_y = u32(AmdGpu::CompSwizzle::Green);
             b.dst_sel_z = u32(AmdGpu::CompSwizzle::Blue);
             b.dst_sel_w = u32(AmdGpu::CompSwizzle::Alpha);
-            if (is_formatted && info.list_stride) {
-                b.stride = info.list_stride;
-                b.data_format = info.list_data_format;
-                b.num_format = info.list_num_format;
-                b.dst_sel_x = (info.list_swizzle >> 12) & 7;
-                b.dst_sel_y = (info.list_swizzle >> 8) & 7;
-                b.dst_sel_z = (info.list_swizzle >> 4) & 7;
-                b.dst_sel_w = info.list_swizzle & 7;
+            u32 stride = info.list_stride, data = info.list_data_format, num = info.list_num_format;
+            u32 swizzle = info.list_swizzle;
+            const auto* first = info.buffers.data();
+            if (info.list_buffers && this >= first && this < first + info.buffers.size() &&
+                size_t(this - first) < info.ListBindings) {
+                const auto& one = info.list_buffers[this - first];
+                if (one.stride) {
+                    stride = one.stride, data = one.data_format, num = one.num_format;
+                    swizzle = one.swizzle;
+                }
+            }
+            if (is_formatted && stride) {
+                b.stride = stride;
+                b.data_format = data;
+                b.num_format = num;
+                b.dst_sel_x = (swizzle >> 12) & 7;
+                b.dst_sel_y = (swizzle >> 8) & 7;
+                b.dst_sel_z = (swizzle >> 4) & 7;
+                b.dst_sel_w = swizzle & 7;
             }
             return b;
         }
@@ -173,6 +185,16 @@ struct ImageResource {
             const size_t index = this >= first && this < first + info.images.size()
                                      ? size_t(this - first)
                                      : 64;
+            if (info.list_images && index < info.ListBindings && info.list_images[index].image_type) {
+                const auto& one = info.list_images[index];
+                plain.type = one.image_type;
+                plain.data_format = one.data_format;
+                plain.num_format = one.num_format;
+                plain.dst_sel_x = (one.swizzle >> 12) & 7;
+                plain.dst_sel_y = (one.swizzle >> 8) & 7;
+                plain.dst_sel_z = (one.swizzle >> 4) & 7;
+                plain.dst_sel_w = one.swizzle & 7;
+            }
             const u64 cubes = info.list_cubes ? *info.list_cubes : info.list_found_cubes;
             if (index < 64 && (cubes >> index & 1)) {
                 plain.type = u64(AmdGpu::ImageType::Cube);

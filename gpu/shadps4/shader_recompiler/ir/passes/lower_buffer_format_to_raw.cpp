@@ -192,7 +192,7 @@ static void StoreBufferFormat(IR::IREmitter& ir, const IR::Value handle, const I
 static void LowerBufferFormatInst(IR::Block& block, IR::Inst& inst, Info& info) {
     IR::IREmitter ir{block, IR::Block::InstructionList::s_iterator_to(inst)};
     const auto flags = inst.Flags<IR::BufferInstInfo>();
-    const auto desc{info.buffers[inst.Arg(0).U32()]};
+    const auto& desc = info.buffers[inst.Arg(0).U32()];
     const auto buffer{desc.GetSharp(info)};
 
     const auto is_inst_typed = flags.inst_data_fmt != AmdGpu::DataFormat::FormatInvalid;
