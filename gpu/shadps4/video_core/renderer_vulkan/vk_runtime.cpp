@@ -1329,11 +1329,13 @@ void Runtime::AccessBuffer(const VideoCore::Buffer* handle, u64 offset, u64 size
         vk::AccessFlagBits2::eDepthStencilAttachmentWrite | vk::AccessFlagBits2::eTransferWrite |
         vk::AccessFlagBits2::eMemoryWrite | vk::AccessFlagBits2::eTransformFeedbackWriteEXT;
 
-    // bbport: reads are tracked at 4 KiB granularity. Constant data comes from ring allocations
-    // at a new offset every draw; rounded, they land in ranges already present and the
-    // insert returns early instead of growing the tree until the next barrier flush.
-    // Wider read ranges only add barriers, never drop one.
-    if (!(src_access & WRITE_MASK) && !BbToggle::Disabled(BbToggle::CoarseReadTracking)) {
+    // bbport: reads are tracked as they are. Rounded to 4 KiB (toggle bit CoarseReadTracking set,
+    // as before), constant data from ring allocations landed in ranges already present and the
+    // tree grew less, but copies next to data a draw read looked like conflicts: the copy
+    // shader's copies were no longer hoisted before the render pass (~8 a frame in the clinic)
+    // and split the G-buffer pass instead. Exact: clinic 45.4 -> 49.0 FPS, Hunter's Dream 75.3
+    // -> 81.1, the GPU thread's time per draw unchanged.
+    if (!(src_access & WRITE_MASK) && BbToggle::Disabled(BbToggle::CoarseReadTracking)) {
         range.range_start &= ~u64{0xFFF};
         range.range_end |= 0xFFF;
     }
