@@ -27,7 +27,7 @@ enum : std::uint64_t {
     DeferredUploads = 256,
     AccessMemo = 512,
     TextureBindingMemo = 1024,
-    CoarseReadTracking = 2048,
+    CoarseReadTracking = 2048, ///< bit set: read ranges rounded to 4 KiB again (the old default)
     PreparedResources = 4096,
     DrawPreparation = 8192,
     DeferredStreamCopies = 16384,
