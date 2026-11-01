@@ -263,6 +263,7 @@ private:
     /// hitches on a first session). Other passes (one-time renders) compile at once, as before.
     struct PendingPipeline;
     bool AsyncSkippable(const PipelineSelection& sel, bool indirect);
+    void NoteForCompile(const PipelineSelection& selection);
     const GraphicsPipeline* FinishPipeline(const GraphicsPipelineKey& key, PendingPipeline& job);
     tsl::robin_map<GraphicsPipelineKey, std::shared_ptr<PendingPipeline>> pending_graphics;
     u64 async_started = 0, async_skipped = 0, async_waited = 0; ///< statistics

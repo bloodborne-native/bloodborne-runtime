@@ -120,9 +120,25 @@ u8 SemanticClass(std::string_view semantic) {
     return semantic == "TEXCOORD" ? 1 : 0;
 }
 
+/// A bundle's file name: UTF-16, cut to the part after the last folder, in lower case.
+std::string FileName(std::string_view bundle, size_t offset) {
+    std::string name;
+    for (size_t at = offset; at + 2 <= bundle.size(); at += 2) {
+        const u16 unit = Read<u16>(bundle, at);
+        if (unit == 0) {
+            break;
+        }
+        const char c = char(unit);
+        name.push_back(c >= 'A' && c <= 'Z' ? char(c + 32) : c);
+    }
+    const size_t slash = name.rfind('\\');
+    return slash == name.npos ? name : name.substr(slash + 1);
+}
+
 class Scanner {
 public:
-    void Add(std::string_view data, size_t header, size_t footer, bool executable) {
+    void Add(std::string_view data, size_t header, size_t footer, bool executable,
+             std::string_view bundle = {}, std::string name = {}) {
         const u64 hash = Read<u64>(data, footer + 16) & 0xffffffffULL;
         if (seen.contains(hash)) {
             return;
@@ -141,6 +157,10 @@ public:
         ScannedShader shader{.hash = hash, .kind = kind, .rsrc1 = w[6], .rsrc2 = w[7],
                              .colour = w[9], .enable = w[10], .executable = executable,
                              .offset = out.code.size() * 4, .length = length};
+        shader.bundle = bundle;
+        shader.name = std::move(name);
+        shader.word13 = w[13];
+        shader.word15 = w[15];
         out.code.resize(out.code.size() + (length + 3) / 4);
         std::memcpy(reinterpret_cast<char*>(out.code.data()) + shader.offset, data.data() + code,
                     length);
@@ -156,9 +176,15 @@ public:
             const size_t table = code - ((2 * count + 3) & ~3u);
             for (u32 i = 0; i < count; ++i) {
                 shader.input_order.push_back(u8(Read<u16>(data, table + i * 2) - 0x0f));
+                shader.pixel_inputs.push_back(u8(Read<u16>(data, table + i * 2)));
             }
         }
         if (kind == 1) {
+            const u32 exports = (w[11] >> 8) & 0xff;
+            const size_t table = code - ((2 * exports + 3) & ~3u);
+            for (u32 i = 0; i < exports; ++i) {
+                shader.exports.push_back(u8(Read<u16>(data, table + i * 2)));
+            }
             AddAttributes(shader, data, footer, w);
         }
         out.shaders.push_back(std::move(shader));
@@ -171,6 +197,7 @@ private:
                        const std::array<u32, 60>& w) {
         const u32 count = w[11] & 0xff;
         bool found = false;
+        u32 found_at = 0;
         for (u32 k = 12; count != 0 && k < 50 && !found; ++k) {
             found = true;
             for (u32 i = 0; i < count && found; ++i) {
@@ -179,15 +206,20 @@ private:
                 found = ((entry >> 8) & 0xff) == 4 + 4 * i && size > 0 && size <= 4 &&
                         (entry >> 24) == 0;
             }
+            found_at = k;
         }
         if (!found) {
             return;
+        }
+        for (u32 i = 0; i < count; ++i) {
+            shader.attribute_sizes.push_back((w[found_at + i] >> 16) & 0xff);
         }
         std::vector<u8> plain(count), named(count), texcoord_float(count);
         if (!shader.executable) {
             const auto semantics = InputSemantics(data, footer);
             if (semantics.size() == count) {
                 for (u32 i = 0; i < count; ++i) {
+                    shader.semantics.emplace_back(semantics[i]);
                     named[i] = SemanticClass(semantics[i]);
                     texcoord_float[i] = semantics[i] == "TEXCOORD" ? 0 : named[i];
                 }
@@ -224,6 +256,8 @@ ShaderScan ScanGameShaders(const std::filesystem::path& game_dir) {
         if (view.size() < 0x40) {
             continue;
         }
+        const std::string name_of_bundle = path.filename().string();
+        const std::string stem = name_of_bundle.substr(0, name_of_bundle.find('.'));
         const u32 files = Read<u32>(view, 0xc);
         for (u32 i = 0; i < files; ++i) {
             const size_t record = 0x40 + size_t(i) * 0x24;
@@ -236,7 +270,11 @@ ShaderScan ScanGameShaders(const std::filesystem::path& game_dir) {
             const size_t footer = file.find("OrbShdr");
             const size_t header = file.find("Shdr");
             if (footer != file.npos && header < footer) {
-                scanner.Add(file, header, footer, false);
+                const auto name = FileName(view, Read<u32>(view, record + 32));
+                if (stem == "gxflvershader") {
+                    scanner.out.model_files.emplace(name, Read<u64>(file, footer + 16) & 0xffffffffULL);
+                }
+                scanner.Add(file, header, footer, false, stem, name);
             }
         }
     }

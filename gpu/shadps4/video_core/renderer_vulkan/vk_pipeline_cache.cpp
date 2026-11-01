@@ -26,6 +26,7 @@
 #include "shader_recompiler/runtime_info.h"
 #include "video_core/amdgpu/liverpool.h"
 #include "video_core/cache_storage.h"
+#include "video_core/renderer_vulkan/vk_pipeline_ahead.h"
 #include "video_core/renderer_vulkan/vk_shader_scan.h"
 #include "video_core/renderer_vulkan/vk_backend_device.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
@@ -608,6 +609,7 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
             device, profile, sel.graphics_key, sel.infos,
             sel.runtime_infos, sel.fetch_shader, sel.modules, sdata, false);
 
+        NoteForCompile(sel);
         // MoltenVK can reject a pipeline even when its shaders compiled. Never persist its key:
         // preloading that key would reject it again and discard the entire shader cache.
         if (!sel.graphics_key.fixed_quad_outer && it.value() && it.value()->Handle()) {
@@ -627,6 +629,24 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
     }
     // A pipeline the driver could not create is empty: no pipeline, the draw is skipped.
     return it->second && it->second->Handle() ? it->second.get() : nullptr;
+}
+
+void PipelineCache::NoteForCompile(const PipelineSelection& selection) {
+    constexpr u32 vertex = u32(SwStage::Vertex), fragment = u32(SwStage::Fragment);
+    static const bool wanted = std::getenv("BB_SHADER_COMPILE") != nullptr;
+    if (!wanted || !device.GetCapabilities().free_colour || !selection.infos[vertex] ||
+        selection.graphics_key.fixed_quad_outer) {
+        return;
+    }
+    for (u32 stage = 0; stage < MaxShaderStages; ++stage) {
+        if (selection.infos[stage] && stage != vertex && stage != fragment) {
+            return; // the step builds vertex and pixel pairs
+        }
+    }
+    NotePipeline(Common::FS::GetUserPath(Common::FS::PathType::CacheDir) / "pipelines-seen.bin",
+                 {.vertex = selection.infos[vertex]->pgm_hash,
+                  .pixel = selection.infos[fragment] ? selection.infos[fragment]->pgm_hash : 0,
+                  .key = selection.graphics_key});
 }
 
 const GraphicsPipeline* PipelineCache::FinishPipeline(const GraphicsPipelineKey& key,
@@ -1336,8 +1356,100 @@ struct AheadShader {
     std::vector<u32> spirv;
 };
 static std::vector<AheadShader> ahead_queue;
+static std::unordered_map<u64, u64> program_spirv; ///< a program's first SPIR-V
 static std::array<u32, 4> list_format{};
 static u32 list_image = 0;
+
+/// Builds the planned pipelines on half the cores; what an earlier run built is skipped, and a run
+/// stopped midway resumes.
+static void BuildPlanned(std::span<const AheadPipeline> planned, u32 states,
+                         const std::unordered_map<u64, vk::ShaderModule>& modules) {
+    const auto cache = Common::FS::GetUserPath(Common::FS::PathType::CacheDir);
+    const auto record_path = cache / "pipelines-ahead.txt";
+    std::unordered_set<u64> built;
+    {
+        std::ifstream record(record_path);
+        std::string line;
+        if (std::getline(record, line) &&
+            line == fmt::format("version {}", Serialization::ShaderBinaryVersion)) {
+            while (std::getline(record, line)) {
+                built.insert(std::strtoull(line.c_str(), nullptr, 16));
+            }
+        }
+    }
+    std::ofstream record(record_path, built.empty() ? std::ios::trunc : std::ios::app);
+    if (built.empty()) {
+        record << fmt::format("version {}\n", Serialization::ShaderBinaryVersion);
+    }
+    bb_list_pipelines_done.store(0);
+    bb_list_pipelines_total.store(u32(planned.size()));
+    const auto start = std::chrono::steady_clock::now();
+    std::atomic<size_t> next{0};
+    std::atomic<u32> made{0}, failed{0}, skipped{0}, no_shader{0};
+    std::mutex record_mutex;
+    const auto work = [&] {
+        for (size_t i = next++; i < planned.size(); i = next++) {
+            const auto& pipeline = planned[i];
+            const u64 id = XXH3_64bits_withSeed(&pipeline.key, sizeof(pipeline.key),
+                                                pipeline.vertex ^ pipeline.pixel << 1);
+            ++bb_list_pipelines_done;
+            if (built.contains(id)) {
+                ++skipped;
+                continue;
+            }
+            const auto vertex = program_spirv.find(pipeline.vertex);
+            const auto pixel = program_spirv.find(pipeline.pixel);
+            if (vertex == program_spirv.end() || (pipeline.pixel && pixel == program_spirv.end())) {
+                ++no_shader;
+                continue;
+            }
+            constexpr u32 vertex_stage = u32(SwStage::Vertex), pixel_stage = u32(SwStage::Fragment);
+            std::array<vk::ShaderModule, MaxShaderStages> stages{};
+            std::array<bool, MaxShaderStages> has{};
+            const auto vertex_module = modules.find(vertex->second);
+            if (vertex_module == modules.end()) {
+                ++no_shader;
+                continue;
+            }
+            stages[vertex_stage] = vertex_module->second;
+            has[vertex_stage] = true;
+            if (pipeline.pixel) {
+                const auto pixel_module = modules.find(pixel->second);
+                if (pixel_module == modules.end()) {
+                    ++no_shader;
+                    continue;
+                }
+                stages[pixel_stage] = pixel_module->second;
+                has[pixel_stage] = true;
+            }
+            std::vector<MetalShadow::VertexInput> inputs;
+            for (u32 attribute = 0; attribute < MaxVertexBufferCount &&
+                                    u32(pipeline.key.vertex_buffer_formats[attribute]) != 0;
+                 ++attribute) {
+                inputs.push_back({.location = attribute});
+            }
+            auto key = pipeline.key;
+            key.stage_hashes[vertex_stage] = pipeline.vertex;
+            key.stage_hashes[pixel_stage] = pipeline.pixel;
+            (MetalShadow::Warm(key, stages, has, inputs) ? made : failed)++;
+            std::scoped_lock lock{record_mutex};
+            record << fmt::format("{:x}\n", id);
+        }
+    };
+    std::vector<std::thread> threads;
+    for (u32 i = 0; i < std::clamp(std::thread::hardware_concurrency() / 2, 2u, 6u); ++i) {
+        threads.emplace_back(work);
+    }
+    for (auto& thread : threads) {
+        thread.join();
+    }
+    record.close();
+    std::ofstream(cache / "pipelines-ahead.complete") << states;
+    std::printf("Pipeline compile: %u built, %u skipped, %u failed, %u without a shader, %.1f s\n",
+                made.load(), skipped.load(), failed.load(), no_shader.load(),
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
+    std::fflush(stdout);
+}
 
 __attribute__((noinline)) int PipelineCache::TranslateForCompile(HwStage hw, SwStage sw,
                                                            const Shader::ShaderParams& params,
@@ -1372,6 +1484,7 @@ __attribute__((noinline)) int PipelineCache::TranslateForCompile(HwStage hw, SwS
         const auto ir = Shader::TranslateProgram(code, ahead_pools, guess, rt, profile);
         const auto spv = Shader::Backend::SPIRV::EmitSPIRV(profile, rt, ir, next);
         const u64 spirv_hash = XXH3_64bits(spv.data(), spv.size() * 4);
+        program_spirv.try_emplace(params.hash, spirv_hash);
         if (list_spirv.insert(spirv_hash).second) {
             ahead_queue.push_back({spirv_hash, params.hash, hw, spv});
         }
@@ -1399,10 +1512,16 @@ void PipelineCache::CompileAhead() {
     }
     started = true;
     {
-        // Compiled by an earlier launch of this version.
-        const auto done = Common::FS::GetUserPath(Common::FS::PathType::CacheDir) / "shaders-ahead.txt.complete";
-        u32 version = 0;
-        if (std::ifstream(done) >> version; version == Serialization::ShaderBinaryVersion) {
+        // Compiled by an earlier launch of this version. A later session's pipelines bring the step
+        // back only with several new states: a run takes minutes, and most new pipelines reuse
+        // states the step has already built.
+        constexpr u32 new_states_for_a_run = 4;
+        const auto cache = Common::FS::GetUserPath(Common::FS::PathType::CacheDir);
+        u32 version = 0, built = 0;
+        std::ifstream(cache / "pipelines-ahead.complete") >> built;
+        const u32 states = CountStates(ReadNotedPipelines(cache / "pipelines-seen.bin"));
+        if (std::ifstream(cache / "shaders-ahead.txt.complete") >> version;
+            version == Serialization::ShaderBinaryVersion && states < built + new_states_for_a_run) {
             return;
         }
     }
@@ -1609,18 +1728,28 @@ void PipelineCache::CompileAheadWork() {
     if (fresh) {
         record << fmt::format("version {}\n", Serialization::ShaderBinaryVersion);
     }
+    const auto cache_dir = Common::FS::GetUserPath(Common::FS::PathType::CacheDir);
+    const auto seen = ReadNotedPipelines(cache_dir / "pipelines-seen.bin");
+    auto planned = PlanPipelines(scan, seen);
+    std::printf("Pipeline compile: %zu seen, %zu planned\n", seen.size(), planned.size());
+    std::fflush(stdout);
+    // Pipelines need every shader's module; Metal's cache makes the compiled ones quick.
+    const bool need_modules = !planned.empty();
     bb_list_shaders_done.store(u32(std::ranges::count_if(
         list_spirv, [&](u64 hash) { return compiled.contains(hash); })));
     bb_list_shaders_total.store(u32(list_spirv.size()));
     static std::vector<VideoCore::Backend::ShaderHandle> modules;
+    std::unordered_map<u64, vk::ShaderModule> native_modules;
     constexpr u32 most_waiting = 64;
     const u32 already = bb_list_shaders_done.load();
     u32 submitted = already;
     for (const auto& shader : ahead_queue) {
-        if (compiled.contains(shader.spirv_hash)) {
+        const bool known = compiled.contains(shader.spirv_hash);
+        if (known && !need_modules) {
             continue;
         }
-        while (submitted - bb_list_shaders_done.load() > most_waiting) {
+        // Only a new shader is counted when it finishes: a compiled one needs no waiting for.
+        while (!known && submitted > bb_list_shaders_done.load() + most_waiting) {
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
         }
         modules.push_back(MakeShader(shader.spirv, GetShaderName(shader.stage, shader.program, 0)));
@@ -1629,8 +1758,11 @@ void PipelineCache::CompileAheadWork() {
             MetalShadow::Compute(ComputePipelineKey{size_t(fake)}, NativeModule(modules.back()),
                                  vk::Pipeline{reinterpret_cast<VkPipeline>(fake += 16)});
         }
-        ++submitted;
-        record << fmt::format("{:x}\n", shader.spirv_hash);
+        submitted += !known;
+        native_modules[shader.spirv_hash] = NativeModule(modules.back());
+        if (!known) {
+            record << fmt::format("{:x}\n", shader.spirv_hash);
+        }
     }
     int still = 0;
     u32 last = 0;
@@ -1642,6 +1774,7 @@ void PipelineCache::CompileAheadWork() {
     }
     record.close();
     std::ofstream(record_path.string() + ".complete") << Serialization::ShaderBinaryVersion;
+    BuildPlanned(planned, CountStates(seen), native_modules);
     std::printf("Shader compile: %u programs, %zu shaders, %u already compiled, %u faults, %u asserts, "
                 "%u exceptions, %u timeouts, %.1f s\n", programs, list_spirv.size(), already, faults,
                 asserts, exceptions, timeouts.load(),

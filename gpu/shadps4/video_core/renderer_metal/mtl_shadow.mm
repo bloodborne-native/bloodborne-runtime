@@ -221,6 +221,30 @@ void Graphics(const Vulkan::GraphicsPipelineKey& key, std::span<const vk::Shader
     }
 }
 
+bool Warm(const Vulkan::GraphicsPipelineKey& key, std::span<const vk::ShaderModule> modules,
+          std::span<const bool> has_stage, std::span<const VertexInput> inputs) {
+    @autoreleasepool {
+        auto& s = Get();
+        std::array<const Metal::ShaderModule*, Vulkan::MaxShaderStages> stages{};
+        for (u32 i = 0; i < Vulkan::MaxShaderStages && i < has_stage.size(); ++i) {
+            if (has_stage[i]) {
+                stages[i] = s.Module(modules[i]);
+                if (!stages[i]) {
+                    return false;
+                }
+            }
+        }
+        std::vector<Metal::VertexAttribute> attributes;
+        for (const auto& in : inputs) {
+            attributes.push_back({in.location, in.per_instance, in.divisor});
+        }
+        Metal::PsoCache::warming = true;
+        const bool built = s.factory.BuildGraphics(key, stages, attributes, false).render != nullptr;
+        Metal::PsoCache::warming = false;
+        return built;
+    }
+}
+
 void Compute(const Vulkan::ComputePipelineKey& key, vk::ShaderModule module,
              vk::Pipeline vk_pipeline) {
     @autoreleasepool { // pipeline-creation threads drain no pool of their own

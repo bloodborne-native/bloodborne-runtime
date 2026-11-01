@@ -42,6 +42,9 @@ void Graphics(const Vulkan::GraphicsPipelineKey& key, std::span<const vk::Shader
               std::span<const bool> has_stage, std::span<const VertexInput> inputs,
               bool aux_fragment, vk::Pipeline pipeline);
 void Compute(const Vulkan::ComputePipelineKey& key, vk::ShaderModule module, vk::Pipeline pipeline);
+/// Builds a pipeline into Metal's own cache and keeps nothing (the ahead-of-time compile).
+bool Warm(const Vulkan::GraphicsPipelineKey& key, std::span<const vk::ShaderModule> modules,
+          std::span<const bool> has_stage, std::span<const VertexInput> inputs);
 /// Around the game pipelines' vkCreate*Pipelines: the layer's generic translation skips them.
 struct GameBuildScope {
     GameBuildScope();
@@ -57,6 +60,10 @@ inline void ForgetModule(vk::ShaderModule) {}
 inline void Graphics(const Vulkan::GraphicsPipelineKey&, std::span<const vk::ShaderModule>,
                      std::span<const bool>, std::span<const VertexInput>, bool, vk::Pipeline) {}
 inline void Compute(const Vulkan::ComputePipelineKey&, vk::ShaderModule, vk::Pipeline) {}
+inline bool Warm(const Vulkan::GraphicsPipelineKey&, std::span<const vk::ShaderModule>,
+                 std::span<const bool>, std::span<const VertexInput>) {
+    return false;
+}
 #endif
 
 } // namespace MetalShadow

@@ -245,6 +245,11 @@ public:
     /// (temp file + rename).
     bool Flush();
 
+    /// Set on a thread of the ahead-of-time compile: a render pipeline is built into Metal's own
+    /// cache and released, neither kept here nor added to the binary archive (one holding every
+    /// pipeline stops the game for over a minute when it loads).
+    static inline thread_local bool warming = false;
+
     struct Counters {
         std::atomic<u64> render_pipelines{};   ///< distinct render pipelines built (incl. failed)
         std::atomic<u64> compute_pipelines{};

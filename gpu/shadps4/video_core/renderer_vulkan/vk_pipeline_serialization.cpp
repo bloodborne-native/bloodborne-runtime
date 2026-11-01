@@ -181,6 +181,7 @@ bool PipelineCache::LoadComputePipeline(Serialization::Archive& ar) {
     const auto [it, is_new] = compute_pipelines.try_emplace(compute_key);
     ASSERT(is_new);
     it.value() = std::move(pipeline);
+    NoteForCompile(sel);
 
     sel.infos.fill(nullptr);
     sel.modules.fill({});
@@ -267,6 +268,7 @@ bool PipelineCache::LoadGraphicsPipeline(Serialization::Archive& ar) {
     const auto [it, is_new] = graphics_pipelines.try_emplace(sel.graphics_key);
     ASSERT(is_new);
     it.value() = std::move(pipeline);
+    NoteForCompile(sel);
 
     sel.infos.fill(nullptr);
     sel.modules.fill({});

@@ -711,6 +711,11 @@ const RenderPipeline* PsoCache::GetRenderPipeline(const Vulkan::GraphicsPipeline
         } while (false);
     }
 
+    if (warming) {
+        static const RenderPipeline built{};
+        return pipeline->state ? &built : nullptr;
+    }
+
     if (!pipeline->state) {
         LOG_ERROR(Render, "Metal render pipeline ({}): {}", StageHashes(key), error);
         // The retained function pointers must exist for the identity check; a failed entry has
