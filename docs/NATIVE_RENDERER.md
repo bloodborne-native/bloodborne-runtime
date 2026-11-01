@@ -695,13 +695,13 @@ From empty caches with nothing recorded (one run, Iosefka's Clinic, standing sti
 
 | | |
 |---|---:|
-| Whole step | 413 s (shaders 405 s, of which pipelines 192 s) |
-| Pipelines planned | 3,326,185 |
+| Whole step | 441 s |
+| Shaders / pipelines planned | 14,713 / 3,326,185 |
 | Built / failed / no shader | 2,598,447 / 656,734 / 71,004 |
-| Metal's cache | 453 MB |
-| Worst frame, first play | 786 ms |
-| Frames over 100 ms | 11 (3.9 s in all) |
-| Last frame over 50 ms | 21.7 s of 74 s |
+| Metal's cache | 355 MB |
+| Worst frame, first play | 561 ms |
+| Frames over 100 ms | 10 (2.8 s in all) |
+| Last frame over 50 ms | 21.6 s of 74 s |
 
 Why pipelines fail to build is not broken down. A session with recorded states in the same place
 is the better case: worst frame 258 ms, 7 frames over 100 ms, against 1.9 s with no step. The stalls
