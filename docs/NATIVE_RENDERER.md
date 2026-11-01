@@ -649,37 +649,54 @@ any window of play; pipelines are made at first use, most while loading (1.9 s w
 run). The stopped run's record held 97 hashes the next run did not make, so some translations
 differ between runs; the cause is open. 167 vertex programs stop the translator and are skipped.
 
-**Pipelines in the step.** The render state is not in the shader bundles. The engine keeps it in
-objects whose layout is known (`CgBlendState`, `CgDepthStencilState`, `CgRasterizerState`, in
-bloodborne-recomp's `annotations/structs.h`); the rules that fill them are not traced yet, so for
-now the state comes from the player's own sessions. Each of the game's 304 material files
-(`mtd/allmaterialbnd.mtdbnd.dcx`) names its shader and blend mode. Of 308 pipelines of one session,
-158 are model pipelines with 13 states, and most of the difference within a pass is the topology, so
-a model's state follows from a few pass rules; the other 150 are fixed passes. With the setting on, each pipeline a session
-builds or loads is noted in the cache's `pipelines-seen.bin`. The next compile (`vk_pipeline_ahead`)
-pairs shaders from the game's files (model shaders by file name and pass, the rest by a vertex
-shader that exports what a pixel shader reads) and gives each pair the two states most used by its
-kind of pixel shader, with vertex formats learned from the same list. Each pipeline is built into
-Metal's own cache and released: it is neither kept in memory nor put in the binary archive.
-Nothing is shipped. A player who compiles before ever playing gets shaders first and pipelines at
-the next launch; after that the step returns only when four new states have been seen, since a run
-takes minutes at first (21 s when nearly everything is built).
+**Pipelines in the step.** The step needs no recorded play. The planner (`vk_pipeline_ahead`) holds
+the engine's rules, and works on the shared pipeline key, so any backend can use the same plan; only
+building and caching is the backend's. A model pixel shader's file name gives its pass and the pass
+gives its targets: `dpt` writes depth only, `dptv` one two-channel target, `velo` one, `pnt` two,
+`gbuf` six or seven, and the forward passes one target with the material's blending. The executable
+holds the YEBIS effects and, after a wide gap in the file, the engine's own programs: each has a
+small family of states, as do the effect bundle and the other full-screen passes. Vertex formats
+come from input semantics; without a semantic, a shader's read size only hints at the format, so
+likely formats are crossed for short layouts. Pairs of shaders come from the game's files (model
+shaders by file name and pass, the rest by a vertex shader that exports what a pixel shader reads).
+Each pipeline is built into Metal's own cache and released: it is neither kept in memory nor put in
+the binary archive. Nothing is shipped.
 
-254 pipelines noted in one cold session gave 301,089 planned pipelines, of which 280,025 were built
-in 44 s on 6 threads; 21,064 could not be built or had no shader, and why each failed is not
-broken down yet. Metal's cache ended at 315 MB. A first play with the game's caches and the archive
-empty, compared with the session that noted them (one run of each, Iosefka's Clinic):
+With the setting on, each pipeline a session builds is still noted in the cache's
+`pipelines-seen.bin` and added to the next plan; the step returns when four new states have been
+seen, so that what the rules miss is still built. `BB_PIPELINE_PLAN_CHECK=<file of noted pipelines>`
+(with `BB_SHADER_COMPILE=1`) prints how many of those the rules alone plan, then exits: 295 of the
+308 of one Clinic session. Unused colour slots hold stale registers that no backend reads, and the
+check ignores them.
 
-| | Session that noted them | First play after the step |
-|---|---:|---:|
-| Worst frame | 1.9 s | 258 ms |
-| Frames over 100 ms | not totalled | 7 (1.3 s in all) |
-| FPS in the level | 41–51 | 49–59 |
+The render state itself lives in engine objects (`CgBlendState`, `CgDepthStencilState`,
+`CgRasterizerState`, in bloodborne-recomp's `annotations/structs.h`). The engine creates its
+targets and states early: by the 2,000th draw 175 of the final 177 colour targets and all 89 depth
+targets exist, in eight colour formats. Blend states are a generated list of about 57 entries;
+rasterizers are 192 entries indexed by an 8-bit key from the object at image offset 0x5540dd8. The
+planner does not read these at run time.
 
-That session is also where the states came from, so this is the best case: states fit on the same
-place. Other areas, and how far one area's states reach another, are not measured. Step attributes
-are built per vertex, so instanced pipelines may still miss Metal's cache. The pipelines of the
-tessellation path are not built ahead.
+From empty caches with nothing recorded (one run, Iosefka's Clinic, standing still):
+
+| | |
+|---|---:|
+| Whole step | 413 s (shaders 405 s, of which pipelines 192 s) |
+| Pipelines planned | 3,326,185 |
+| Built / failed / no shader | 2,598,447 / 656,734 / 71,004 |
+| Metal's cache | 453 MB |
+| Worst frame, first play | 786 ms |
+| Frames over 100 ms | 11 (3.9 s in all) |
+| Last frame over 50 ms | 21.7 s of 74 s |
+
+Why pipelines fail to build is not broken down. A session with recorded states in the same place
+is the better case: worst frame 258 ms, 7 frames over 100 ms, against 1.9 s with no step. The stalls
+above fall in the load into the level. Comparing the Metal source compiled in the step and in play:
+the 277 sources the step built cost 119 ms in all in play (6.5 ms at most), and the rest of the
+compile time, 1.9 s, is 63 sources it never built: 30 forms of the game's shaders (compute most of
+all: buffers of differing types and strides, which one format per shader does not reach; also 3D
+images), 16 tessellation variants, 15 of the port's own compute kernels and 2 rect-list vertex
+shaders. Moving, fighting, menus and other areas are not measured. Step attributes are built per
+vertex, so instanced pipelines may still miss Metal's cache.
 
 **Progress for the player.** Cache entries are named by program hash and permutation, so the step
 can list what is compiled, skip it, and show compiled of total; what play compiled counts.

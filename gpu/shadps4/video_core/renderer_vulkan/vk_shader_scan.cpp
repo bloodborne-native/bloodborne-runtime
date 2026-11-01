@@ -157,6 +157,7 @@ public:
         ScannedShader shader{.hash = hash, .kind = kind, .rsrc1 = w[6], .rsrc2 = w[7],
                              .colour = w[9], .enable = w[10], .executable = executable,
                              .offset = out.code.size() * 4, .length = length};
+        shader.position = header;
         shader.bundle = bundle;
         shader.name = std::move(name);
         shader.word13 = w[13];

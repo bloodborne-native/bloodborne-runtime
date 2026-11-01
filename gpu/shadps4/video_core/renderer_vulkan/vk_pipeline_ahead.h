@@ -1,6 +1,8 @@
 // bbport: the pipelines the ahead-of-time compile builds. The game chooses a pipeline's state at
-// draw time, so the states come from what this player's sessions have drawn, kept in their cache;
-// the pairs of shaders come from the game's files. Nothing here is shipped.
+// draw time; the planner knows the engine's rules for it (a model pass's targets, the formats and
+// blends of the other passes, the vertex layouts) and adds what this player's sessions have drawn,
+// kept in their cache. The pairs of shaders come from the game's files. No backend's objects here:
+// the same plan serves any backend. Nothing here is shipped.
 #pragma once
 
 #include <filesystem>
@@ -25,7 +27,9 @@ void NotePipeline(const std::filesystem::path& path, const AheadPipeline& pipeli
 std::vector<AheadPipeline> ReadNotedPipelines(const std::filesystem::path& path);
 /// How many different states `seen` holds.
 u32 CountStates(std::span<const AheadPipeline> seen);
-/// Every pair the files give, with the states and vertex formats `seen` shows for its kind.
+/// Every pair the files give, with the rules' states and formats and those `seen` shows.
 std::vector<AheadPipeline> PlanPipelines(const ShaderScan& scan, std::span<const AheadPipeline> seen);
+/// Prints how many of `seen` the rules alone plan (BB_PIPELINE_PLAN_CHECK).
+void CheckPlan(const ShaderScan& scan, std::span<const AheadPipeline> seen);
 
 } // namespace Vulkan

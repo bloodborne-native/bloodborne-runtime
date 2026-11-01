@@ -24,6 +24,7 @@ struct ScannedShader {
     u32 address{};  ///< pixel: SPI_PS_INPUT_ADDR
     u32 inputs{};   ///< pixel: interpolated inputs
     bool executable{};
+    size_t position{};               ///< where it starts in the executable
     size_t offset{}; ///< into ShaderScan::code, in bytes
     size_t length{};
     std::vector<u8> input_order; ///< pixel: each input's parameter

@@ -84,6 +84,164 @@ std::string WideKind(const ScannedShader& pixel) {
     return fmt::format("{}|{:x}", Group(pixel), pixel.colour);
 }
 
+// The states the engine draws with, by pass. A model pass's targets are fixed by the renderer; its
+// blending comes from the material. The other programs are full-screen, effect and interface
+// passes: their targets are among the engine's few formats. Values as GraphicsPipelineKey holds them.
+constexpr u64 Rgba8 = 0x000706050400800a, Bgra8 = 0x000704050600800a, Srgb8 = 0x000706050400824a,
+              R11G11B10 = 0x00000605040081c6, Rgba16f = 0x00070605040081cc,
+              Rg16f = 0x00000005040081c5, R32f = 0x00000000040121c4;
+constexpr u32 NoBlend = 0, Additive = 0x60010104, Alpha = 0x60010504;
+constexpr u32 DepthStencil = 0x0f, DepthOnly = 0x0b, DepthNoClamp = 0x09, NoDepth = 0x08;
+constexpr u32 SourceOver = 0x40000504, SourceAdd = 0x40000104, SourceOverColour = 0x40000508;
+constexpr u32 TriangleList = 0x2c4, TriangleStrip = 0x2c6, RectList = 0x251, RectListNoFill = 0x2d1, StripNoClip = 0xc6,
+              ListNoClip = 0x244;
+
+/// One state: `colours` empty for a pass that writes only depth.
+std::string MakeState(std::span<const u64> colours, u32 blend, u32 write_mask, u32 z, u32 topology) {
+    GraphicsPipelineKey key{};
+    const u32 count = std::max<u32>(u32(colours.size()), 1);
+    key.num_color_attachments = count;
+    std::memcpy(key.color_buffers.data(), colours.data(), colours.size() * sizeof(u64));
+    auto* bytes = reinterpret_cast<char*>(&key);
+    for (u32 i = 0; i < colours.size(); ++i) {
+        std::memcpy(bytes + offsetof(GraphicsPipelineKey, blend_controls) + i * 4, &blend, 4);
+        std::memcpy(bytes + offsetof(GraphicsPipelineKey, write_masks) + i * 4, &write_mask, 4);
+        key.color_samples[i] = 1;
+    }
+    const u32 mask = count == 8 ? ~0u : (1u << (count * 4)) - 1;
+    std::memcpy(bytes + offsetof(GraphicsPipelineKey, cb_shader_mask), &mask, 4);
+    std::memset(bytes + offsetof(GraphicsPipelineKey, logic_op), 0xcc, 1);
+    key.num_samples = key.depth_samples = 1;
+    key.mrt_mask = (1u << count) - 1;
+    std::memcpy(bytes + sizeof(key) - 8, &z, 4);
+    std::memcpy(bytes + sizeof(key) - 4, &topology, 4);
+    return StateOf(key);
+}
+
+/// A model pass's states; a pass with a colour word of `targets` entries.
+void ModelStates(std::string_view pass, u32 targets, std::set<std::string>& out) {
+    if (pass.starts_with("dptv")) {
+        const std::array colours{Rg16f};
+        out.insert(MakeState(colours, NoBlend, 0xf, DepthOnly, TriangleList));
+    } else if (pass.starts_with("dpt") || pass == "so" || pass == "watdpt") {
+        for (const u32 z : {DepthStencil, DepthOnly, DepthNoClamp}) {
+            out.insert(MakeState({}, NoBlend, 0, z, TriangleList));
+        }
+    } else if (pass.starts_with("gbuf")) {
+        constexpr std::array colours{Rgba8, Rgba8, Srgb8, Rgba8, R11G11B10, Rgba16f, Rgba16f};
+        const std::span used{colours.data(), std::min<size_t>(targets, colours.size())};
+        out.insert(MakeState(used, NoBlend, 0xf, DepthStencil, TriangleList));
+        out.insert(MakeState(used, Alpha, 0x7, DepthStencil, TriangleList));
+    } else if (pass.starts_with("pnt")) {
+        const std::array colours{Srgb8, Rgba8};
+        out.insert(MakeState(colours, 0x65000504, 0xf, DepthStencil, TriangleList));
+    } else if (pass == "velo") {
+        const std::array colours{Rgba8};
+        out.insert(MakeState(colours, NoBlend, 0xf, DepthStencil, TriangleList));
+    } else { // forward passes: the material blends
+        const std::array colours{Rgba16f};
+        for (const u32 blend : {NoBlend, Additive, Alpha}) {
+            out.insert(MakeState(colours, blend, 0xf, DepthStencil, TriangleList));
+        }
+    }
+}
+
+/// A full-screen, effect or interface program's states.
+void FixedStates(const ScannedShader& pixel, std::set<std::string>& out) {
+    u32 targets = 0;
+    for (u32 colour = pixel.colour; colour != 0; colour >>= 4) {
+        targets += (colour & 0xf) != 0;
+    }
+    static constexpr std::array one{Rgba8, Bgra8, Rgba16f, R11G11B10, Rg16f, R32f, Srgb8};
+    for (const u32 topology : {TriangleStrip, RectList, StripNoClip, ListNoClip}) {
+        for (const u32 z : {NoDepth, DepthStencil}) {
+            out.insert(MakeState({}, NoBlend, 0, z, topology));
+            if (targets <= 1) {
+                for (const u64 colour : one) {
+                    const std::array colours{colour};
+                    for (const u32 mask : {0xfu, 0x7u}) {
+                        out.insert(MakeState(colours, NoBlend, mask, z, topology));
+                    }
+                    for (const u32 blend : {Additive, Alpha}) {
+                        out.insert(MakeState(colours, blend, 0xf, z, topology));
+                    }
+                }
+            } else if (targets == 2) {
+                const std::array same{R11G11B10, R11G11B10}, hdr{Rgba16f, Rgba16f};
+                for (const u32 blend : {NoBlend, Additive}) {
+                    out.insert(MakeState(same, blend, 0xf, z, topology));
+                    out.insert(MakeState(hdr, blend, 0xf, z, topology));
+                }
+                out.insert(MakeState(same, NoBlend, 0x7, z, topology));
+            }
+        }
+    }
+}
+
+/// The executable holds the YEBIS effects and, after a wide gap, the engine's own programs. Returns
+/// where those start. YEBIS: full-screen with one target, none seen drawn with anything else.
+size_t EngineProgramsStart(const ShaderScan& scan) {
+    std::vector<size_t> positions;
+    for (const auto& shader : scan.shaders) {
+        if (shader.executable) {
+            positions.push_back(shader.position);
+        }
+    }
+    std::sort(positions.begin(), positions.end());
+    size_t gap = 0, start = 0;
+    for (size_t i = positions.size() / 2; i < positions.size(); ++i) {
+        if (positions[i] - positions[i - 1] > gap) {
+            gap = positions[i] - positions[i - 1];
+            start = positions[i];
+        }
+    }
+    return start;
+}
+
+/// The engine's programs in the executable: 2D drawing, full-screen passes, depth only.
+void EngineStates(std::set<std::string>& out) {
+    const std::array bgra{Bgra8};
+    for (const u32 blend : {NoBlend, SourceOver, SourceAdd, SourceOverColour}) {
+        out.insert(MakeState(bgra, blend, 0xf, DepthStencil, ListNoClip));
+    }
+    for (const u64 colour : {Bgra8, Rgba8, Rgba16f, R11G11B10}) {
+        const std::array colours{colour};
+        for (const u32 z : {NoDepth, DepthStencil}) {
+            for (const u32 mask : {0xfu, 0x8u}) {
+                out.insert(MakeState(colours, NoBlend, mask, z, StripNoClip));
+            }
+        }
+    }
+    for (const u32 topology : {ListNoClip, RectList, RectListNoFill}) {
+        out.insert(MakeState({}, NoBlend, 0, DepthStencil, topology));
+    }
+}
+
+void EffectStates(std::set<std::string>& out) {
+    for (const u64 colour : {Rgba16f, R11G11B10, Bgra8, Rgba8, Rg16f}) {
+        const std::array colours{colour};
+        out.insert(MakeState(colours, NoBlend, 0xf, NoDepth, StripNoClip));
+    }
+    const std::array hdr{Rgba16f};
+    out.insert(MakeState(hdr, NoBlend, 0x8, NoDepth, StripNoClip));
+}
+
+/// The particle and effect bundle: blended over the scene, or one of two targets.
+void ParticleStates(std::set<std::string>& out) {
+    for (const u32 topology : {TriangleList, TriangleStrip}) {
+        for (const u32 z : {DepthStencil, NoDepth}) {
+            for (const u32 blend : {NoBlend, Additive, Alpha}) {
+                for (const u64 colour : {Rgba16f, Rgba8}) {
+                    const std::array colours{colour};
+                    out.insert(MakeState(colours, blend, 0xf, z, topology));
+                }
+                const std::array two{Rgba16f, Rgba16f};
+                out.insert(MakeState(two, blend, 0xf, z, topology));
+            }
+        }
+    }
+}
+
 /// The model pairs by file name: a pixel shader with its pass's vertex shaders.
 void ModelPairs(const ShaderScan& scan, std::set<std::pair<u64, u64>>& pairs) {
     static constexpr std::array<std::string_view, 4> skins{"", "_skin", "_morphskin", "_morph"};
@@ -150,7 +308,7 @@ void ExportPairs(const ShaderScan& scan, std::set<std::pair<u64, u64>>& pairs) {
             }
         }
         if (group == "gxrenderershader" || group == "gxposteffect" || group == "gxshader" ||
-            group == "gxgui") {
+            group == "gxgui" || group == "gxffxshader") {
             for (const auto* vertex : vertex_by_group[group]) {
                 const Set exports(vertex->exports.begin(), vertex->exports.end());
                 if (std::includes(exports.begin(), exports.end(), inputs.begin(), inputs.end())) {
@@ -167,6 +325,43 @@ using Formats = std::vector<u32>;
 struct FormatTable {
     std::map<std::pair<std::string, u32>, Counts> by_semantic;
     std::map<u32, Counts> by_size;
+
+    /// The engine's vertex layouts, most used first; what a session draws adds to them.
+    FormatTable() {
+        const auto rule = [this](std::string_view semantic, u32 size, std::initializer_list<u32> formats) {
+            u32 weight = u32(formats.size());
+            for (const u32 format : formats) {
+                by_semantic[{std::string{semantic}, size}][fmt::format("{}", format)] += weight--;
+            }
+        };
+        // A shader reads up to four components of any buffer: without a semantic, its size only hints.
+        const auto sized = [this](u32 size, std::initializer_list<u32> formats) {
+            u32 weight = u32(formats.size());
+            for (const u32 format : formats) {
+                by_size[size][fmt::format("{}", format)] += weight--;
+            }
+        };
+        constexpr u32 Bytes4 = 37, Packed = 41, Half2 = 82, Half4 = 96, Float2 = 103, Float3 = 106,
+                      Float4 = 109;
+        sized(1, {100, Packed, 14});
+        sized(2, {Float2, Half4, Half2});
+        sized(3, {Float3, Float2, Float4, Packed, Bytes4});
+        sized(4, {Bytes4, Float2, Float4, Packed, Half4});
+        rule("POSITION", 3, {Float3, Float4});
+        rule("POSITION", 4, {Float4});
+        rule("NORMAL", 3, {Packed});
+        rule("NORMAL", 4, {Packed});
+        rule("TANGENT", 3, {Packed});
+        rule("TANGENT", 4, {Packed});
+        rule("BINORMAL", 1, {Packed});
+        rule("BLENDINDICES", 4, {Packed});
+        rule("BLENDWEIGHT", 4, {Bytes4});
+        rule("COLOR", 3, {Bytes4});
+        rule("COLOR", 4, {Bytes4});
+        rule("TEXCOORD", 2, {Float2, Half2, Half4});
+        rule("TEXCOORD", 3, {Bytes4});
+        rule("TEXCOORD", 4, {Half4, Float4});
+    }
 
     static void Add(Counts& counts, u32 format) {
         ++counts[fmt::format("{}", format)];
@@ -208,17 +403,51 @@ struct FormatTable {
             }
             if (known) {
                 add(named);
-                // The first texture coordinates differ among meshes more than any other input.
+                // Meshes differ most in their texture coordinates and position.
                 for (size_t i = 0; i < count; ++i) {
-                    if (vertex.semantics[i] == "TEXCOORD") {
+                    if (vertex.semantics[i] != "TEXCOORD" && vertex.semantics[i] != "POSITION") {
+                        continue;
+                    }
+                    const auto& counts = by_semantic.at({vertex.semantics[i], vertex.attribute_sizes[i]});
+                    for (u32 rank = 1; rank < counts.size(); ++rank) {
                         auto other = named;
-                        other[i] = pick(by_semantic.at({"TEXCOORD", vertex.attribute_sizes[i]}), 1);
+                        other[i] = pick(counts, rank);
+                        add(other);
+                        for (size_t j = i + 1; j < count; ++j) {
+                            if (vertex.semantics[j] == "TEXCOORD") {
+                                other[j] = pick(by_semantic.at({"TEXCOORD", vertex.attribute_sizes[j]}),
+                                                rank);
+                            }
+                        }
                         add(std::move(other));
-                        break;
                     }
                 }
                 return out;
             }
+        }
+        // Without semantics: the attributes' likely formats crossed, for short layouts.
+        if (count <= 3) {
+            constexpr u32 tried = 3;
+            std::vector<Formats> crossed{Formats{}};
+            for (size_t i = 0; i < count; ++i) {
+                const auto it = by_size.find(vertex.attribute_sizes[i]);
+                if (it == by_size.end()) {
+                    return {};
+                }
+                std::vector<Formats> next;
+                for (const auto& partial : crossed) {
+                    for (u32 rank = 0; rank < std::min<u32>(tried, u32(it->second.size())); ++rank) {
+                        auto longer = partial;
+                        longer.push_back(pick(it->second, rank));
+                        next.push_back(std::move(longer));
+                    }
+                }
+                crossed = std::move(next);
+            }
+            for (auto& formats : crossed) {
+                add(std::move(formats));
+            }
+            return out;
         }
         for (u32 rank = 0; rank < FormatSets; ++rank) {
             Formats plain(count);
@@ -300,25 +529,45 @@ u32 CountStates(std::span<const AheadPipeline> seen) {
 
 std::vector<AheadPipeline> PlanPipelines(const ShaderScan& scan, std::span<const AheadPipeline> seen) {
     std::vector<AheadPipeline> out;
-    if (seen.empty()) {
-        return out;
-    }
     std::unordered_map<u64, const ScannedShader*> shaders;
     for (const auto& shader : scan.shaders) {
         shaders.emplace(shader.hash, &shader);
     }
-    std::unordered_map<std::string, Counts> fine, wide;
+    std::unordered_map<std::string, Counts> fine;
     FormatTable formats;
     for (const auto& pipeline : seen) {
         if (const auto vertex = shaders.find(pipeline.vertex); vertex != shaders.end()) {
             formats.Learn(*vertex->second, pipeline.key);
         }
-        const auto pixel = shaders.find(pipeline.pixel);
-        if (pixel != shaders.end()) {
+        if (const auto pixel = shaders.find(pipeline.pixel); pixel != shaders.end()) {
             ++fine[FineKind(*pixel->second)][StateOf(pipeline.key)];
-            ++wide[WideKind(*pixel->second)][StateOf(pipeline.key)];
         }
     }
+    // A program can serve several passes under different file names.
+    std::unordered_map<u64, std::set<std::string>> model_states;
+    for (const auto& [file, hash] : scan.model_files) {
+        std::string_view name{file};
+        if (!name.ends_with(".ppo") || !shaders.contains(hash)) {
+            continue;
+        }
+        name.remove_suffix(4);
+        if (const size_t clip = name.find('@'); clip != name.npos) {
+            name = name.substr(0, clip);
+        }
+        if (name.ends_with("]")) {
+            name = name.substr(0, name.rfind("_["));
+        }
+        u32 targets = 0;
+        for (u32 colour = shaders.at(hash)->colour; colour != 0; colour >>= 4) {
+            targets += (colour & 0xf) != 0;
+        }
+        ModelStates(name.substr(name.rfind('_') + 1), targets, model_states[hash]);
+    }
+    const size_t engine_programs = EngineProgramsStart(scan);
+    const auto effect = [engine_programs](const ScannedShader& shader) {
+        return shader.executable && shader.position < engine_programs;
+    };
+    std::unordered_map<u64, std::set<std::string>> fixed_states;
     std::set<std::pair<u64, u64>> pairs;
     ModelPairs(scan, pairs);
     ExportPairs(scan, pairs);
@@ -328,17 +577,34 @@ std::vector<AheadPipeline> PlanPipelines(const ShaderScan& scan, std::span<const
         if (vertex == shaders.end() || pixel == shaders.end()) {
             continue;
         }
-        const auto kind = fine.find(FineKind(*pixel->second));
-        const Counts* counts = kind != fine.end() ? &kind->second : nullptr;
-        if (!counts) {
-            const auto broad = wide.find(WideKind(*pixel->second));
-            if (broad == wide.end()) {
-                continue;
+        std::set<std::string> states;
+        if (const auto model = model_states.find(pixel_hash); model != model_states.end()) {
+            states = model->second;
+        } else {
+            auto& fixed = fixed_states[pixel_hash];
+            if (fixed.empty()) {
+                if (effect(*pixel->second)) {
+                    EffectStates(fixed);
+                } else if (pixel->second->executable) {
+                    EngineStates(fixed);
+                } else if (pixel->second->bundle == "gxffxshader") {
+                    ParticleStates(fixed);
+                } else {
+                    FixedStates(*pixel->second, fixed);
+                }
             }
-            counts = &broad->second;
+            states = fixed;
         }
-        const auto states = Top(*counts, StatesPerKind);
-        for (const auto& set : formats.For(*vertex->second)) {
+        if (const auto kind = fine.find(FineKind(*pixel->second)); kind != fine.end()) {
+            for (auto& state : Top(kind->second, StatesPerKind)) {
+                states.insert(std::move(state));
+            }
+        }
+        auto sets = formats.For(*vertex->second);
+        if (effect(*pixel->second) && sets.size() > 1) {
+            sets.resize(1); // their vertex shader takes a full-screen quad
+        }
+        for (const auto& set : sets) {
             for (const auto& state : states) {
                 AheadPipeline pipeline{.vertex = vertex_hash, .pixel = pixel_hash};
                 auto* bytes = reinterpret_cast<char*>(&pipeline.key);
@@ -348,7 +614,58 @@ std::vector<AheadPipeline> PlanPipelines(const ShaderScan& scan, std::span<const
             }
         }
     }
+    // Depth only, with no pixel shader: the engine's simple vertex programs.
+    for (const auto& shader : scan.shaders) {
+        if (shader.kind != 1 || shader.bundle == "gxflvershader") {
+            continue;
+        }
+        for (const u32 z : {DepthStencil, DepthOnly, DepthNoClamp}) {
+            for (const u32 topology : {RectList, RectListNoFill}) {
+                AheadPipeline pipeline{.vertex = shader.hash, .pixel = 0};
+                pipeline.key.num_samples = pipeline.key.depth_samples = 1;
+                auto* bytes = reinterpret_cast<char*>(&pipeline.key);
+                std::memset(bytes + offsetof(GraphicsPipelineKey, logic_op), 0xcc, 1);
+                std::memcpy(bytes + sizeof(pipeline.key) - 8, &z, 4);
+                std::memcpy(bytes + sizeof(pipeline.key) - 4, &topology, 4);
+                for (const auto& set : formats.For(shader)) {
+                    std::memcpy(bytes + FormatsStart, set.data(), set.size() * sizeof(u32));
+                    out.push_back(pipeline);
+                }
+            }
+        }
+    }
     return out;
+}
+
+void CheckPlan(const ShaderScan& scan, std::span<const AheadPipeline> seen) {
+    const auto planned = PlanPipelines(scan, {});
+    // Slots past the active targets hold stale registers, and the shader mask without a pixel
+    // shader too: no backend reads them.
+    const auto clean = [](AheadPipeline pipeline) {
+        const u32 count = std::min<u32>(pipeline.key.num_color_attachments, AmdGpu::NUM_COLOR_BUFFERS);
+        auto* bytes = reinterpret_cast<char*>(&pipeline.key);
+        std::memset(bytes + offsetof(GraphicsPipelineKey, color_buffers) + count * 8, 0, (8 - count) * 8);
+        if (pipeline.pixel == 0) {
+            pipeline.key.cb_shader_mask = {};
+        }
+        return pipeline;
+    };
+    const auto whole = [&](const AheadPipeline& raw) {
+        const auto pipeline = clean(raw);
+        const auto* bytes = reinterpret_cast<const char*>(&pipeline.key);
+        return fmt::format("{:x}|{:x}|", pipeline.vertex, pipeline.pixel) +
+               std::string{bytes + FormatsStart, sizeof(pipeline.key) - FormatsStart};
+    };
+    std::unordered_set<std::string> exact;
+    for (const auto& pipeline : planned) {
+        exact.insert(whole(pipeline));
+    }
+    const auto found = std::count_if(seen.begin(), seen.end(), [&](const AheadPipeline& pipeline) {
+        return exact.contains(whole(pipeline));
+    });
+    std::printf("Plan check: %zu planned; of %zu seen, %zu found\n", planned.size(), seen.size(),
+                size_t(found));
+    std::fflush(stdout);
 }
 
 } // namespace Vulkan

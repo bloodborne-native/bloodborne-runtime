@@ -1730,6 +1730,10 @@ void PipelineCache::CompileAheadWork() {
     }
     const auto cache_dir = Common::FS::GetUserPath(Common::FS::PathType::CacheDir);
     const auto seen = ReadNotedPipelines(cache_dir / "pipelines-seen.bin");
+    if (const char* check = std::getenv("BB_PIPELINE_PLAN_CHECK")) {
+        CheckPlan(scan, ReadNotedPipelines(check));
+        std::_Exit(0);
+    }
     auto planned = PlanPipelines(scan, seen);
     std::printf("Pipeline compile: %zu seen, %zu planned\n", seen.size(), planned.size());
     std::fflush(stdout);
