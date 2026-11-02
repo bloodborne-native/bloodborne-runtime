@@ -21,8 +21,9 @@ lookups and the Tpf repository beside it, and a class's size comes from the exec
 bytes). Every resource goes through the same base, `FD4ResCapHolder`, with two counts: one at `+0x60` and a hold at
 `+0x64`, which map, object and material code release. A resource leaves the holder's table, keyed by the same
 hash of its name at `+0x18`, only when both are clear. A texture with both clear is destroyed; one with no
-references left but still held stays, with its handle pointed at a texture a global object holds, which looks
-like a placeholder. So the engine's own texture lifetime passes through
+references left but still held stays, with its handle pointed at the default texture, the one `TexResCap` uses
+when given none. The handle drops its reference to the old image, and the last reference to go runs the image's
+destructor, so a held texture keeps its name and gives up its image. So the engine's own texture lifetime passes through
 one place. That is the place to take textures from. Texture objects are filled from a source object through virtual calls, in the
 create fragment (`CSGXTextureCreateFragment`), and carry DXGI-style format codes; the GUI's textures map sRGB
 formats to their linear ones the same way.
