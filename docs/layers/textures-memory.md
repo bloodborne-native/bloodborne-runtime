@@ -83,3 +83,5 @@ Taking textures as the objects the engine creates and releases, which removes th
 This layer exists on every platform, and it costs more on PCs with a separate GPU memory, where shared
 data has to be copied and kept in sync. Reading GPU results back there is slow, and the game assumes
 it is cheap.
+
+GPU memory for render data comes from a heap (`CG::GpuHeap`). Freeing is deferred: a block goes on a retired list and an end-of-pipe write marks it, and the heap reuses it only when it next runs short (`reclaimRetired`).
