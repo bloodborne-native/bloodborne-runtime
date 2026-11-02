@@ -14,7 +14,7 @@ when nothing in it is translated any more:
 |---|---|---|
 | [The PS4 executable](docs/layers/executable.md) | Prepared and patched in memory at start | A game that starts as a native program |
 | [The PS4's system](docs/layers/system.md) | No firmware; the runtime translates the game's PS4 calls | Recompiled code calling the platform |
-| [The C and file libraries](docs/layers/c-libraries.md) | Their busiest functions replaced | The rest of both modules |
+| [The C and file libraries](docs/layers/c-libraries.md) | 94% recompiled, opt-in | What stays translated on purpose |
 | [The renderer](docs/layers/renderer.md) | Metal directly; every frame translated from PS4 commands | Working from the engine's own draws |
 | [PS4 GPU commands](docs/layers/gpu-commands.md) | All decoded; the engine's draws found | Taking them from the engine |
 | [PS4 user data](docs/layers/user-data.md) | The walker runs for everyone | The draw state, on by default |

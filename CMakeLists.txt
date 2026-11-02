@@ -245,7 +245,8 @@ if (APPLE)
         install(DIRECTORY recomp/tools/recomp/sdkless DESTINATION ${BB_KIT})
         install(FILES recomp/annotations/functions.tsv DESTINATION ${BB_KIT}/annotations)
         install(PROGRAMS recomp/tools/recomp/build_library.py recomp/tools/recomp/ps4elf.py
-                recomp/tools/recomp/pointers.py recomp/tools/recomp/imports.py DESTINATION ${BB_KIT}/tools)
+                recomp/tools/recomp/pointers.py recomp/tools/recomp/imports.py recomp/tools/recomp/modules.py
+                DESTINATION ${BB_KIT}/tools)
         install(FILES recomp/tools/recomp/import_names.inc DESTINATION ${BB_KIT}/tools)
     endif()
     install(CODE "message(STATUS \"Stripping the build's search paths from the bundle\")")
