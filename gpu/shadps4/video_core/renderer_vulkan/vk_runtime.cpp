@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <atomic>
+#include <map>
 #include <array>
 #include <cstdio>
 #include <cstdlib>
@@ -169,14 +170,44 @@ bool Runtime::CopyBufferBeforePass(const VideoCore::Buffer* src, const VideoCore
         };
         std::vector<Copy> copies;
         std::vector<std::pair<u64, u64>> written, read; ///< by buffer handle: [start, end)
+        /// bbport (BB_HOIST_INTERVAL_SETS, default on): the same ranges merged, start -> end,
+        /// for logarithmic overlap checks; `sets` is fixed when the batch is made.
+        std::map<u64, u64> written_set, read_set;
+        bool sets{};
     };
     static std::shared_ptr<Batch> batch;
     static u64 batch_generation = ~0ull;
+    // The batch grows over a whole pass: scanning every earlier range for each new copy grew
+    // with the square of the hoisted copies (with exact read tracking nearly every copy-shader
+    // copy is hoisted). Merged interval sets answer the same question in logarithmic time.
+    static const bool sets = [] {
+        const char* env = std::getenv("BB_HOIST_INTERVAL_SETS");
+        return !(env && env[0] == '0');
+    }();
     const auto overlaps = [](const std::vector<std::pair<u64, u64>>& ranges, u64 start, u64 end) {
         for (const auto& [a, b] : ranges) {
             if (start < b && a < end) return true;
         }
         return false;
+    };
+    const auto overlaps_set = [](const std::map<u64, u64>& set, u64 start, u64 end) {
+        auto it = set.upper_bound(start);
+        if (it != set.begin() && std::prev(it)->second > start) return true;
+        return it != set.end() && it->first < end;
+    };
+    const auto insert_set = [](std::map<u64, u64>& set, u64 start, u64 end) {
+        auto it = set.upper_bound(start);
+        if (it != set.begin() && std::prev(it)->second >= start) {
+            --it;
+            start = it->first;
+            end = std::max(end, it->second);
+            it = set.erase(it);
+        }
+        while (it != set.end() && it->first <= end) {
+            end = std::max(end, it->second);
+            it = set.erase(it);
+        }
+        set.emplace(start, end);
     };
     const u64 base_src = reinterpret_cast<u64>(static_cast<VkBuffer>(src->Handle())) << 40;
     const u64 base_dst = reinterpret_cast<u64>(static_cast<VkBuffer>(dst->Handle())) << 40;
@@ -184,16 +215,25 @@ bool Runtime::CopyBufferBeforePass(const VideoCore::Buffer* src, const VideoCore
     for (const auto& copy : copies) {
         if (!joins) break;
         const u64 s0 = base_src + copy.src_offset, d0 = base_dst + copy.dst_offset;
-        joins = !overlaps(batch->written, s0, s0 + copy.size) &&
-                !overlaps(batch->written, d0, d0 + copy.size) &&
-                !overlaps(batch->read, d0, d0 + copy.size);
+        joins = batch->sets ? !overlaps_set(batch->written_set, s0, s0 + copy.size) &&
+                                  !overlaps_set(batch->written_set, d0, d0 + copy.size) &&
+                                  !overlaps_set(batch->read_set, d0, d0 + copy.size)
+                            : !overlaps(batch->written, s0, s0 + copy.size) &&
+                                  !overlaps(batch->written, d0, d0 + copy.size) &&
+                                  !overlaps(batch->read, d0, d0 + copy.size);
     }
     const auto note = [&](Batch& b) {
         const auto regions = ConvertRegions<vk::BufferCopy>(copies);
         b.copies.push_back({src->Handle(), dst->Handle(), {regions.begin(), regions.end()}});
         for (const auto& copy : copies) {
-            b.read.emplace_back(base_src + copy.src_offset, base_src + copy.src_offset + copy.size);
-            b.written.emplace_back(base_dst + copy.dst_offset, base_dst + copy.dst_offset + copy.size);
+            const u64 r0 = base_src + copy.src_offset, w0 = base_dst + copy.dst_offset;
+            if (b.sets) {
+                insert_set(b.read_set, r0, r0 + copy.size);
+                insert_set(b.written_set, w0, w0 + copy.size);
+            } else {
+                b.read.emplace_back(r0, r0 + copy.size);
+                b.written.emplace_back(w0, w0 + copy.size);
+            }
         }
     };
     bool placed = false;
@@ -202,6 +242,7 @@ bool Runtime::CopyBufferBeforePass(const VideoCore::Buffer* src, const VideoCore
         placed = true;
     } else {
         auto fresh = std::make_shared<Batch>();
+        fresh->sets = sets;
         note(*fresh);
         placed = scheduler.RecordBeforePass([fresh, enc = encoder](vk::CommandBuffer cmdbuf) {
             for (const auto& copy : fresh->copies) {
