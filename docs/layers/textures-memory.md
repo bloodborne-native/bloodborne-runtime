@@ -34,8 +34,10 @@ is created and leaves when destroyed, its size added to a running total in bytes
 total in MiB, so the game itself knows how much it holds (an image keeps its size in bytes at `+0x58`). Textures come from file resources: character, parts and model packs, loose `.tpf` files and start-up data. A
 map loads in tiers, each a run of steps in `MapRes`'s state machine: the model, then `LoTex`, `LoHiTex` and `HiTex`,
 each with `_Init`, `_Wait`, `_Finish` and `_Release`, and the `HiTex` step takes its holds through
-`TexRepository::findOrCreate`. So the game streams map textures by tier and releases them itself. What chooses a
-tier has not been read yet. How often that happens in play has not been measured. So the engine's own texture lifetime passes through
+`TexRepository::findOrCreate`. So the game streams map textures by tier and releases them itself. The level comes
+from `MapInsUpdateHelper::update`, not from distance: it walks the map's pieces and compares each one's group masks
+with the current ones, changing a limited number on each call. A piece in the current groups gets its full level,
+one in a second set the low level, and the rest are released, so what is in memory follows the groups in view. How often that happens in play has not been measured. So the engine's own texture lifetime passes through
 one place. That is the place to take textures from. Texture objects are filled from a source object through virtual calls, in the
 create fragment (`CSGXTextureCreateFragment`), and carry DXGI format codes: the engine's graphics layer is shaped like Direct3D 11, with a device that
 creates buffers and 2D textures from descriptions (size, mips, format, bind flags) and shader resource, render
