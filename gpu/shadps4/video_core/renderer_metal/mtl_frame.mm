@@ -234,6 +234,80 @@ void UseAddressBuffers(id<MTLCommandEncoder> encoder, bool render) {
     }
 }
 
+// ---- Fenced ordering (BB_METAL_FENCED_ORDERING, default on, =0 to turn it off) ----
+// Render encoders declared the whole guest memory (its pools) as read and compute encoders as
+// read and write, and the pools are hazard-tracked: Metal then serialised every render encoder
+// against the compute and blit encoders around it, dependent or not. Render encoders now declare
+// nothing (the memory stays resident through the residency set) and fences keep the real
+// orderings:
+// - read after write: every render encoder waits, before its vertex and fragment stages, for the
+//   latest compute/blit encoder (a fence each of them updates when it ends; compute and blit
+//   encoders stay ordered among themselves by tracking);
+// - write after read: a compute/blit encoder waits for the render encoders of its command buffer
+//   before it when the renderer recorded a barrier since its last wait (the barrier tracker
+//   found a conflict), and the first one of a command buffer waits for the last render encoder
+//   submitted before it.
+// Render encoders that write guest memory (BB_METAL_RENDER_WRITES=1) keep their declarations.
+bool Fenced() {
+    static const bool on = [] {
+        const char* env = std::getenv("BB_METAL_FENCED_ORDERING");
+        const char* writes = std::getenv("BB_METAL_RENDER_WRITES");
+        return !(env && env[0] == '0') && !(writes && writes[0] == '1');
+    }();
+    return on && residency;
+}
+id<MTLFence> NonrenderFence() {
+    static id<MTLFence> fence = [device newFence];
+    return fence;
+}
+id<MTLFence> LastRenderFence() {
+    static id<MTLFence> fence = [device newFence];
+    return fence;
+}
+/// Both global fences updated once by a submitted encoder before any recorded work, so that no
+/// wait ever refers to a fence nothing updated.
+void SeedOrderFences() {
+    id<MTLCommandBuffer> cmd = [queue commandBuffer];
+    cmd.label = @"bbport fence seed";
+    id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
+    [enc updateFence:NonrenderFence()];
+    [enc updateFence:LastRenderFence()];
+    [enc endEncoding];
+    [cmd commit];
+}
+constexpr MTLRenderStages kRenderStages = MTLRenderStageVertex | MTLRenderStageFragment;
+void FenceRenderStart(Owned& o) {
+    [o.render waitForFence:NonrenderFence() beforeStages:kRenderStages];
+}
+void FenceRenderEnd(Owned& o) {
+    if (o.fence_next == o.fence_pool.size()) {
+        o.fence_pool.push_back([device newFence]);
+    }
+    id<MTLFence> fence = o.fence_pool[o.fence_next++];
+    [o.render updateFence:fence afterStages:kRenderStages];
+    [o.render updateFence:LastRenderFence() afterStages:kRenderStages];
+    o.render_fences.push_back(fence);
+}
+template <typename Encoder>
+void FenceNonrenderStart(Owned& o, Encoder encoder) {
+    if (!o.nonrender_seen) {
+        [encoder waitForFence:LastRenderFence()];
+        o.nonrender_seen = true;
+    }
+    if (o.war_pending) {
+        for (id<MTLFence> fence : o.render_fences) {
+            [encoder waitForFence:fence];
+        }
+        o.render_fences.clear();
+        o.fence_next = 0; // every fence in the pool has been waited on: free again
+    }
+    o.war_pending = false;
+}
+template <typename Encoder>
+void FenceNonrenderEnd(Encoder encoder) {
+    [encoder updateFence:NonrenderFence()];
+}
+
 /// The render encoder of the current pass, opened on first use: a pass without draws costs
 /// nothing unless it clears (EndRendering), and work before its first draw (tessellation
 /// kernels) goes before it instead of splitting it.
@@ -242,10 +316,16 @@ id<MTLRenderCommandEncoder> RenderEncoder(Owned& o) {
         return o.render;
     }
     if (o.compute) {
+        if (Fenced()) {
+            FenceNonrenderEnd(o.compute);
+        }
         [o.compute endEncoding];
         o.compute = nil;
     }
     if (o.blit) {
+        if (Fenced()) {
+            FenceNonrenderEnd(o.blit);
+        }
         [o.blit endEncoding];
         o.blit = nil;
     }
@@ -253,7 +333,11 @@ id<MTLRenderCommandEncoder> RenderEncoder(Owned& o) {
     o.pass_opened = true;
     o.cache = {};
     if (o.render) {
-        UseAddressBuffers(o.render, true);
+        if (Fenced()) {
+            FenceRenderStart(o);
+        } else {
+            UseAddressBuffers(o.render, true);
+        }
     }
     return o.render;
 }
@@ -265,6 +349,9 @@ id<MTLComputeCommandEncoder> ComputeEncoder(Owned& o) {
     EndEncoders(o);
     o.compute = [o.cmd computeCommandEncoderWithDispatchType:MTLDispatchTypeSerial];
     UseAddressBuffers(o.compute, false);
+    if (Fenced()) {
+        FenceNonrenderStart(o, o.compute);
+    }
     return o.compute;
 }
 
@@ -274,6 +361,9 @@ id<MTLBlitCommandEncoder> BlitEncoder(Owned& o) {
     }
     EndEncoders(o);
     o.blit = [o.cmd blitCommandEncoder];
+    if (Fenced()) {
+        FenceNonrenderStart(o, o.blit);
+    }
     return o.blit;
 }
 
@@ -746,6 +836,9 @@ void Init(VkDevice dev, id<MTLCommandQueue> q, PFN_vkExportMetalObjectsEXT expor
     if (residency) {
         [residency commit];
         [queue addResidencySet:residency];
+        if (Fenced()) {
+            SeedOrderFences();
+        }
     } else {
         std::printf("Metal frame: no residency set (%s): every device-address buffer is declared "
                     "on each encoder instead\n",
@@ -756,17 +849,37 @@ void Init(VkDevice dev, id<MTLCommandQueue> q, PFN_vkExportMetalObjectsEXT expor
 void EndEncoders(Owned& o) {
     FlushPending(o);
     if (o.render) {
+        if (Fenced()) {
+            FenceRenderEnd(o);
+        }
         [o.render endEncoding];
         o.render = nil;
     }
     if (o.compute) {
+        if (Fenced()) {
+            FenceNonrenderEnd(o.compute);
+        }
         [o.compute endEncoding];
         o.compute = nil;
     }
     if (o.blit) {
+        if (Fenced()) {
+            FenceNonrenderEnd(o.blit);
+        }
         [o.blit endEncoding];
         o.blit = nil;
     }
+}
+
+void RetainFencesUntilDone(Owned& o) {
+    if (o.fence_pool.empty()) {
+        return;
+    }
+    // The command buffer does not retain what it uses (unretained references).
+    __block std::vector<id<MTLFence>> fences = o.fence_pool;
+    [o.cmd addCompletedHandler:^(id<MTLCommandBuffer>) {
+      fences.clear();
+    }];
 }
 
 void ReturnScratchWhenDone(Owned& o) {
@@ -788,6 +901,7 @@ void ReturnScratchWhenDone(Owned& o) {
 
 void CommitChunk(Owned& o) {
     EndEncoders(o);
+    RetainFencesUntilDone(o);
     ReturnScratchWhenDone(o);
     if (!o.keep.empty()) {
         __block std::vector<id<MTLBuffer>> keep = std::move(o.keep);
@@ -1063,9 +1177,13 @@ void DeviceAddressTaken(VkBuffer buffer) {
 }
 
 void Barrier(Owned& o) {
+    o.war_pending = true; // fenced ordering: the next compute/blit encoder waits for renders
     // Tracked resources order the encoders; inside a compute encoder dispatches are serial.
     // A blit encoder is ended so the next command sees its writes.
     if (o.blit) {
+        if (Fenced()) {
+            FenceNonrenderEnd(o.blit);
+        }
         [o.blit endEncoding];
         o.blit = nil;
     }
@@ -1204,6 +1322,9 @@ void EndRendering(Owned& o) {
         RenderEncoder(o); // a pass without draws still performs its clears
     }
     if (o.render) {
+        if (Fenced()) {
+            FenceRenderEnd(o);
+        }
         [o.render endEncoding];
         o.render = nil;
     }

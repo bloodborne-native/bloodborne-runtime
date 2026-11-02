@@ -435,6 +435,7 @@ void CommitOwned(uint32_t count, Get&& get, const std::vector<EventSignal>* sign
             }
             CompleteFence(o->cmd, fence);
         }
+        MetalFrame::RetainFencesUntilDone(*o);
         MetalFrame::ReturnScratchWhenDone(*o);
         if (!o->keep.empty()) {
             // Our temporary buffers live until the GPU is done with them.
