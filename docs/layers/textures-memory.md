@@ -17,7 +17,8 @@ texture, about 1-1.5 GB.
 The engine does track its textures itself: `TexRepository` is a hash table of reference-counted entries,
 keyed by a path that ignores case and slash direction, and a texture can have an `_l` low-resolution
 partner. `annotations/functions.tsv` in bloodborne-recomp names what is known of it. That is the place
-to take textures from.
+to take textures from. Texture objects are filled from a source object through virtual calls, in the
+create fragment (`CSGXTextureCreateFragment`), and carry DXGI-style format codes.
 
 ## Where it stands
 
