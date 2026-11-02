@@ -20,8 +20,10 @@ partner. `annotations/functions.tsv` in bloodborne-recomp names what is known of
 lookups and the Tpf repository beside it, and a class's size comes from the executable (`TexRepositoryImp`, 216
 bytes). Every resource goes through the same base: `FD4ResCapHolder::release` drops a count at `+0x60` of the
 `FD4ResCap` and unlinks it from the holder's table, keyed by the same hash of its name at `+0x18`, once that
-count reaches zero and a second one at `+0x64` is not positive. So the engine's own texture lifetime passes
-through one place. That is the place to take textures from. Texture objects are filled from a source object through virtual calls, in the
+count reaches zero and a second one at `+0x64` is not positive. The texture repository's own release goes through it: a texture whose counts are done is destroyed, and
+one whose count at `+0x60` is zero while the one at `+0x64` is still positive stays, with its handle pointed at a
+texture a singleton holds, which looks like a placeholder. So the engine's own texture lifetime passes through
+one place. That is the place to take textures from. Texture objects are filled from a source object through virtual calls, in the
 create fragment (`CSGXTextureCreateFragment`), and carry DXGI-style format codes; the GUI's textures map sRGB
 formats to their linear ones the same way.
 
