@@ -30,7 +30,7 @@ entry. So the engine unloads textures and restores them itself. The unload start
 each texture it made, and an image's destructor drops a shared storage object at `+0x40`, which goes back to its
 heap with the last reference. The graphics device also keeps a live list of its images: an image leaves it on destruction, taking
 its size from a running total in bytes, kept beside the count and the total in MiB, so the game itself knows how
-much it holds. How often that happens in play has not been measured. So the engine's own texture lifetime passes through
+much it holds (an image keeps its size in bytes at `+0x58`). How often that happens in play has not been measured. So the engine's own texture lifetime passes through
 one place. That is the place to take textures from. Texture objects are filled from a source object through virtual calls, in the
 create fragment (`CSGXTextureCreateFragment`), and carry DXGI-style format codes; the GUI's textures map sRGB
 formats to their linear ones the same way.
