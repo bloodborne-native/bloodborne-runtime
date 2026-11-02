@@ -85,3 +85,5 @@ data has to be copied and kept in sync. Reading GPU results back there is slow, 
 it is cheap.
 
 GPU memory for render data comes from a heap (`CG::GpuHeap`). Freeing is deferred: a block goes on a retired list and an end-of-pipe write marks it, and the heap reuses it only when it next runs short (`reclaimRetired`).
+
+The SDK's texture layout code is linked into the executable and named: the `Gnm::Texture`, `RenderTarget` and `DepthRenderTarget` field readers, and `GpuAddress` with its tile-mode table, surface sizes, and tilers for linear, 1D and 2D layouts. The executable tiles and detiles surfaces itself through them, so a texture the game writes this way is already in the console's tiled layout when the GPU sees it.
