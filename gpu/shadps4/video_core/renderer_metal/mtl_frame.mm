@@ -706,6 +706,12 @@ Stats& GetStats() {
     return stats;
 }
 
+VkImage ImageOfView(VkImageView view) {
+    std::scoped_lock lock{maps_mutex};
+    const auto it = view_infos.find(view);
+    return it != view_infos.end() ? it->second.image : VK_NULL_HANDLE;
+}
+
 size_t AddressBufferCount() {
     std::scoped_lock lock{maps_mutex};
     return declared_buffers.size();

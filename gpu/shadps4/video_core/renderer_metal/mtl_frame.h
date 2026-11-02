@@ -245,5 +245,7 @@ struct Stats {
         skipped_emulated{}, skipped_discard{}, unsupported{}, tess_draws{}, tess_after_tess{};
 };
 Stats& GetStats();
+/// The image of a view (VK_NULL_HANDLE: not known).
+VkImage ImageOfView(VkImageView view);
 
 } // namespace MetalFrame

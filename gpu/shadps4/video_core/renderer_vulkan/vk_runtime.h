@@ -194,6 +194,8 @@ private:
     boost::container::small_vector<vk::ImageMemoryBarrier2, 32> image_barriers;
     vk::MemoryBarrier2 memory_barrier{};
     bool global_write = false; ///< bbport: AccessGlobal wrote since the last FlushBarriers
+    /// bbport: a graphics stage wrote since the last FlushBarriers (barriers kept inside passes).
+    bool graphics_write = false;
     // bbport: ranges inserted into barrier_tracker since its last Clear(); re-inserting a
     // contained range is a no-op, and draws re-bind the same ranges constantly.
     struct AccessMemo {

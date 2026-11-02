@@ -1179,6 +1179,10 @@ bool FrameEnabled() {
     return frame_enabled;
 }
 
+unsigned long long ImageOfView(unsigned long long view) {
+    return (unsigned long long)MetalFrame::ImageOfView(VkImageView(view));
+}
+
 void* MetalOnlyPipeline(const void* graphics_info, const void* compute_info) {
     const VkPipeline pipeline = PlaceholderPipeline();
     @autoreleasepool {

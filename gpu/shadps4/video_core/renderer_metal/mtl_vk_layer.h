@@ -31,6 +31,9 @@ void* MtlQueue();
 /// Step C (BB_METAL_FRAME=1): every command buffer is encoded in Metal.
 bool FrameEnabled();
 
+/// The image of an image view the Metal frame knows (as u64; 0: not known).
+unsigned long long ImageOfView(unsigned long long view);
+
 /// The Metal encoding state of an owned command buffer (a VkCommandBuffer), or null: for the
 /// render adapter's Metal recorder (mtl_recorder.mm), which encodes without Vulkan calls.
 MetalFrame::Owned* OwnedFor(void* command_buffer);
