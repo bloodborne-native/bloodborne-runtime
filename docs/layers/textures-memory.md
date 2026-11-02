@@ -14,6 +14,11 @@ texture, about 1-1.5 GB.
 - The recompiled library no longer keeps the game decoded: the peak footprint went from 7.8 GB to
   5.7 GB in Iosefka's Clinic.
 
+The engine does track its textures itself: `TexRepository` is a hash table of reference-counted entries,
+keyed by a path that ignores case and slash direction, and a texture can have an `_l` low-resolution
+partner. `annotations/functions.tsv` in bloodborne-recomp names what is known of it. That is the place
+to take textures from.
+
 ## Where it stands
 
 0%: this has not started. Textures are still inferred and held twice.
