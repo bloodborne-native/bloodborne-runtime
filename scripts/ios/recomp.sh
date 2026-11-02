@@ -21,7 +21,7 @@ for f in "$gen"/recomp*.c; do
 done
 echo "${#changed[@]} files to compile"
 printf '%s\n' "${changed[@]}" | grep . | xargs -P "$(sysctl -n hw.ncpu)" -I{} "${clang[@]}" -O2 -g -std=gnu11 \
-    -w -ffp-contract=off -fno-strict-aliasing -fvisibility=hidden -Ideps/ios-arm64/include -Irecomp/src \
+    -w -ffp-contract=off -fno-strict-aliasing -fvisibility=hidden -Ideps/ios-arm64/include -Ibbcpu/src \
     -c {} -o "$out/{}.o" || true
 for f in "${changed[@]}"; do [[ -e $out/$f.o ]] || { echo "failed: $f"; exit 1; }; done
 "${clang[@]}" -dynamiclib -install_name @rpath/librecomp.dylib "$out"/"$gen"/recomp*.o -o out/ios/librecomp.dylib

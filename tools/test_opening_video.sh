@@ -47,7 +47,7 @@ import hashlib, json, sys, subprocess
 p=Path('out', 'stability_'+sys.argv[1]+'.json')
 m=json.loads(p.read_text())
 m['host_binaries']={str(f):hashlib.sha256(f.read_bytes()).hexdigest() for f in
-                   (Path('out/bb-probe'),Path('recomp/out/libbbcpu.a')) if f.exists()}
+                   (Path('out/bb-probe'),Path('bbcpu/out/libbbcpu.a')) if f.exists()}
 # Stamp the actually loaded GPU library too: a preserved pre-fix library can be selected
 # for A/B without rebuilding or changing the main checkout between runs.
 try:

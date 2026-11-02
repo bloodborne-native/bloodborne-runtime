@@ -1,4 +1,4 @@
-# Builds the runtime (bb-probe, the GPU library, bbcpu from the recomp submodule) on Apple Silicon:
+# Builds the runtime (bb-probe, the GPU library, bbcpu from its submodule) on Apple Silicon:
 # every push to main and every pull request. The app and its releases: bloodborne-mac.
 name: macOS
 

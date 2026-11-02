@@ -10,3 +10,7 @@
 [submodule "recomp"]
 	path = recomp
 	url = https://github.com/bloodborne-native/bloodborne-recomp.git
+[submodule "bbcpu"]
+	path = bbcpu
+	url = https://github.com/bloodborne-native/bbcpu.git
+	branch = main

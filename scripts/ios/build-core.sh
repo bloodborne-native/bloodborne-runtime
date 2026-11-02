@@ -17,9 +17,9 @@ compile() { # compile SOURCE FLAGS...: one object in $obj
 stub=(); [[ ${BB_IOS_GPU:-1} == 0 ]] && stub=(ios/bbgpu_stub.c)
 for source in src/probe.c src/runtime*.c src/platform.c src/vulkan_smoke.c "${stub[@]}"; do
     compile "$source" -std=c11 -O2 -g -Wall -Wextra -Werror -Wno-unknown-warning-option \
-        -Wno-unused-but-set-global -pthread -Dmain=bb_probe_main -I"$deps/include" -I. -Isrc -Irecomp/src
+        -Wno-unused-but-set-global -pthread -Dmain=bb_probe_main -I"$deps/include" -I. -Isrc -Ibbcpu/src
 done
-for source in recomp/src/cpu/*.c recomp/src/cpu/hostcall.S; do
+for source in bbcpu/src/cpu/*.c bbcpu/src/cpu/hostcall.S; do
     compile "$source" -std=gnu11 -O2 -g -Wall -Wextra -Werror -Wno-unused-parameter -I"$deps/include"
 done
 for source in third_party/LibAtrac9/C/src/*.c; do compile "$source" -std=c99 -O2 -g -w; done

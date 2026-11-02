@@ -46,12 +46,12 @@ an address in that executable.
 ## CPU: bbcpu and the recompiled library
 
 The game's code is x86-64. On Apple Silicon it runs through **bbcpu**
-([bloodborne-recomp](https://github.com/bloodborne-native/bloodborne-recomp), `recomp/src/cpu/`):
+([bbcpu](https://github.com/bloodborne-native/bbcpu), the `bbcpu/` submodule):
 blocks are translated to arm64 the first time they run, with an interpreter as the fallback.
 Guest memory is host memory (identity mapped). A guest call to an address outside the game's code
 is a call of a host function, with the System V arguments bridged; host code calls game functions
 with `runtime_guest_call` (`bbcpu_call` underneath). Details:
-[Native arm64](https://github.com/bloodborne-native/bloodborne-recomp/blob/main/docs/ARM64_NATIVE.md).
+[bbcpu's architecture](https://github.com/bloodborne-native/bbcpu/blob/main/docs/ARCHITECTURE.md).
 
 `BB_RECOMP_LIB=recomp/out/recomp/librecomp.dylib` loads the **recompiled library** instead: the
 game's functions generated as C from the player's own executable and compiled ahead of time. A

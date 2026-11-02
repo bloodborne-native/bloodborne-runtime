@@ -4,7 +4,7 @@ Runs Bloodborne (PS4, CUSA03173 1.09) outside a PS4: the loader, the PS4 system 
 (`src/runtime_*.c`), the optional online module (`gpu/bbnet20` on macOS, `BB_ONLINE=1`) and the
 renderer (`gpu/`, derived from shadPS4; on Apple Silicon Metal directly by default, or Vulkan
 through MoltenVK with `BB_METAL_FRAME=0`; Vulkan elsewhere). Built on bbport. The game's code
-runs through bbcpu from the `recomp/` submodule (bloodborne-recomp), or as its recompiled library
+runs through the `bbcpu/` submodule, or as the recompiled library made by `recomp/` (bloodborne-recomp)
 (`BB_RECOMP_LIB`).
 
 ## Read first
@@ -75,11 +75,12 @@ is bound by rendering, so CPU-side changes are measured in CPU time, in alternat
 - No game data in the repository: captures, traces, frame dumps and logs with addresses stay in
   the ignored `out/`.
 
-## Working rules (all four repositories)
+## Working rules (all five repositories)
 
-- **The project is four repositories**, nested as submodules:
+- **The project is five repositories**, nested as submodules:
   [bloodborne-mac](https://github.com/bloodborne-native/bloodborne-mac) (the app) ⊃ `runtime/` =
-  [bloodborne-runtime](https://github.com/bloodborne-native/bloodborne-runtime) ⊃ `recomp/` =
+  [bloodborne-runtime](https://github.com/bloodborne-native/bloodborne-runtime) ⊃ `bbcpu/` =
+  [bbcpu](https://github.com/bloodborne-native/bbcpu) and `recomp/` =
   [bloodborne-recomp](https://github.com/bloodborne-native/bloodborne-recomp); the app also has
   `launcher/` = [bloodborne-launcher](https://github.com/bloodborne-native/bloodborne-launcher).
   Commit in the repository that owns the file, push it, then bump the submodule pointer in the

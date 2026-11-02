@@ -18,7 +18,7 @@ if (APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
 endif()
 
 project(bbport LANGUAGES C CXX)
-# bbcpu's host call is assembler (recomp/src/cpu/hostcall.S); its .S goes through the C compiler.
+# bbcpu's host call is assembler (bbcpu/src/cpu/hostcall.S); its .S goes through the C compiler.
 enable_language(ASM)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # ctest, and BUILD_TESTING, before gpu/ (which registers its own tests): bash build.sh --test
@@ -80,12 +80,12 @@ if (APPLE)
 endif()
 add_subdirectory(gpu)
 
-# bbcpu (recomp/src/cpu, the bloodborne-recomp submodule): runs the game's x86-64 code through the
+# bbcpu (bbcpu/src/cpu, the bbcpu submodule): runs the game's x86-64 code through the
 # translator. macOS only: the Rosetta 2 build runs the guest code as it is, and Linux has none.
 # Zydis decodes the guest's instructions.
 if (APPLE)
     find_package(Zydis REQUIRED)
-    file(GLOB BB_CPU_SOURCES CONFIGURE_DEPENDS recomp/src/cpu/*.c recomp/src/cpu/*.S)
+    file(GLOB BB_CPU_SOURCES CONFIGURE_DEPENDS bbcpu/src/cpu/*.c bbcpu/src/cpu/*.S)
     add_library(bbcpu STATIC ${BB_CPU_SOURCES})
     # C flags for the C sources only: the assembler would warn that -std=gnu11 does nothing, and
     # here a warning is an error.
@@ -112,16 +112,17 @@ if (APPLE AND BB_ARCH STREQUAL "arm64")
     add_executable(bb-recomp-gen recomp/tools/recomp/bbrecomp.c)
     set_target_properties(bb-recomp-gen PROPERTIES OUTPUT_NAME bbrecomp RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/recomp-kit)
     target_compile_options(bb-recomp-gen PRIVATE -std=gnu11 -w)
-    target_include_directories(bb-recomp-gen PRIVATE recomp/src ${BB_DEPS}/include)
+    target_include_directories(bb-recomp-gen PRIVATE bbcpu/src ${BB_DEPS}/include)
     target_link_libraries(bb-recomp-gen PRIVATE bbcpu Zydis::Zydis)
     target_link_directories(bb-recomp-gen PRIVATE ${BB_DEPS}/lib)
     execute_process(COMMAND git -C ${CMAKE_SOURCE_DIR}/recomp rev-parse HEAD
                     OUTPUT_VARIABLE BB_RECOMP_VERSION OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
     file(WRITE ${CMAKE_BINARY_DIR}/recomp-kit/VERSION "${BB_RECOMP_VERSION}\n")
     # The recompiler versions a library may come from and still load: every commit since the
-    # library interface (rc.h, BB_RECOMP_API_VERSION) last changed. The launcher keeps such a
+    # library interface last changed: rc.h while it lived in the recompiler, bbcpu_api since it
+    # moved to bbcpu (edits only: adding one and removing the other changed nothing). The launcher keeps such a
     # library in use and offers an update that compiles only what changed (build_library.py).
-    execute_process(COMMAND git -C ${CMAKE_SOURCE_DIR}/recomp log -1 --format=%H -- src/recomp/rc.h
+    execute_process(COMMAND git -C ${CMAKE_SOURCE_DIR}/recomp log -1 --diff-filter=M --format=%H -- src/recomp/rc.h tools/recomp/bbcpu_api
                     OUTPUT_VARIABLE BB_RECOMP_API_SINCE OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
     execute_process(COMMAND git -C ${CMAKE_SOURCE_DIR}/recomp rev-list ${BB_RECOMP_API_SINCE}^..HEAD
                     OUTPUT_VARIABLE BB_RECOMP_COMPATIBLE ERROR_QUIET)
@@ -136,7 +137,7 @@ target_compile_options(atrac9 PRIVATE -std=c99 -w -UNDEBUG)
 # bbport's own C, and what the game links: the decoders, the GPU library, SDL3, the CPU layer.
 add_library(bb-c INTERFACE)
 target_compile_options(bb-c INTERFACE -std=c11 -pthread ${BB_WARNINGS})
-target_include_directories(bb-c INTERFACE . src ${CMAKE_SOURCE_DIR}/recomp/src)
+target_include_directories(bb-c INTERFACE . src ${CMAKE_SOURCE_DIR}/bbcpu/src ${CMAKE_SOURCE_DIR}/recomp/src)
 add_library(bb-runtime INTERFACE)
 target_link_libraries(bb-runtime INTERFACE bb-c atrac9 bbgpu PkgConfig::SDL3 m)
 if (APPLE)
@@ -239,8 +240,8 @@ if (APPLE)
         set(BB_KIT Contents/Resources/game/recomp)
         install(TARGETS bb-recomp-scan bb-recomp-gen RUNTIME_DEPENDENCY_SET bb-payload RUNTIME DESTINATION ${BB_KIT}/bin)
         install(FILES ${CMAKE_BINARY_DIR}/recomp-kit/VERSION ${CMAKE_BINARY_DIR}/recomp-kit/COMPATIBLE DESTINATION ${BB_KIT})
-        install(FILES recomp/src/recomp/rc.h DESTINATION ${BB_KIT}/include/recomp)
-        install(FILES recomp/src/cpu/bbcpu.h recomp/src/cpu/cpu_internal.h DESTINATION ${BB_KIT}/include/cpu)
+        install(FILES bbcpu/src/recomp/rc.h DESTINATION ${BB_KIT}/include/recomp)
+        install(FILES bbcpu/src/cpu/bbcpu.h bbcpu/src/cpu/cpu_internal.h DESTINATION ${BB_KIT}/include/cpu)
         install(DIRECTORY ${BB_DEPS}/include/Zydis ${BB_DEPS}/include/Zycore DESTINATION ${BB_KIT}/include)
         install(DIRECTORY recomp/tools/recomp/sdkless DESTINATION ${BB_KIT})
         install(FILES recomp/annotations/functions.tsv DESTINATION ${BB_KIT}/annotations)

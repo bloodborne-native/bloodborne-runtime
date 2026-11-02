@@ -32,13 +32,14 @@ community servers: Seamless Hunt and The Hunter's Dream.
 It is **built on [bbport](https://github.com/deadinside28/bloodborne_pc) by deadinside28**, the
 native Linux port this work started from as a fork, whose releases keep being merged or ported
 here (0.51, and parts of 0.6: [Upstream](docs/UPSTREAM.md)). On Apple Silicon the game's code
-runs through bbcpu, the CPU layer of
-[bloodborne-recomp](https://github.com/bloodborne-native/bloodborne-recomp) (the `recomp/`
-submodule), or as recompiled native code it generates.
+runs through [bbcpu](https://github.com/bloodborne-native/bbcpu) (the `bbcpu/` submodule), or as
+recompiled native code from [bloodborne-recomp](https://github.com/bloodborne-native/bloodborne-recomp)
+(the `recomp/` submodule).
 
 | Repository | |
 |---|---|
-| [bloodborne-recomp](https://github.com/bloodborne-native/bloodborne-recomp) | The recompiler and bbcpu: portable |
+| [bbcpu](https://github.com/bloodborne-native/bbcpu) | The CPU layer: runs x86-64 PS4 code on arm64 |
+| [bloodborne-recomp](https://github.com/bloodborne-native/bloodborne-recomp) | The recompiler |
 | **bloodborne-runtime** (this one) | Stands in for the PS4: the loader, its system, the renderer |
 | [bloodborne-launcher](https://github.com/bloodborne-native/bloodborne-launcher) | The independent launcher: profiles, saves and settings |
 | [bloodborne-mac](https://github.com/bloodborne-native/bloodborne-mac) | Packages the launcher as the macOS app, with releases and player guides |
