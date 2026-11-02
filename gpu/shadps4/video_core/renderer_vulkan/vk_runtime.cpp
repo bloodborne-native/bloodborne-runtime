@@ -12,6 +12,9 @@
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
+#if BB_METAL_BACKEND
+#include "video_core/renderer_metal/mtl_vk_layer.h"
+#endif
 #include "video_core/renderer_vulkan/vk_backend_device.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_state.h"
@@ -24,6 +27,28 @@
 #include <vulkan/vulkan_format_traits.hpp>
 
 namespace Vulkan {
+
+namespace {
+/// bbport: a pipeline stage of draws (or every stage).
+bool IsGraphicsStage(vk::PipelineStageFlags2 stages) {
+    using S = vk::PipelineStageFlagBits2;
+    constexpr vk::PipelineStageFlags2 graphics =
+        S::eAllCommands | S::eAllGraphics | S::eVertexShader | S::eTessellationControlShader |
+        S::eTessellationEvaluationShader | S::eGeometryShader | S::eFragmentShader |
+        S::eEarlyFragmentTests | S::eLateFragmentTests | S::eColorAttachmentOutput |
+        S::ePreRasterizationShaders | S::eTransformFeedbackEXT;
+    return bool(stages & graphics);
+}
+
+/// bbport BB_BARRIERS_IN_PASS (default on, =0 to turn it off): see Runtime::FlushBarriers.
+bool BarriersInPass() {
+    static const bool on = [] {
+        const char* env = std::getenv("BB_BARRIERS_IN_PASS");
+        return !(env && env[0] == '0');
+    }();
+    return on;
+}
+} // namespace
 
 static vk::ImageType ConvertImageType(AmdGpu::ImageType type) noexcept {
     switch (type) {
@@ -1399,6 +1424,7 @@ void Runtime::AccessBuffer(const VideoCore::Buffer* handle, u64 offset, u64 size
     };
     if (src_access & WRITE_MASK) {
         insert(Access::Write);
+        graphics_write |= IsGraphicsStage(src_stage);
     }
     if (src_access & READ_MASK) {
         insert(Access::Read);
@@ -1413,6 +1439,7 @@ void Runtime::AccessGlobal(vk::PipelineStageFlags2 src_stage, vk::AccessFlags2 s
     if (src_access & vk::AccessFlagBits2::eShaderWrite) {
         memory_barrier.srcAccessMask |= vk::AccessFlagBits2::eShaderWrite;
         global_write = true;
+        graphics_write |= IsGraphicsStage(src_stage);
     }
 }
 
@@ -1423,6 +1450,38 @@ u32 Runtime::BindingLayout(const VideoCore::Image& image) const {
 void Runtime::FlushBarriers() {
     BeforeImageAccess();
     vk::DependencyInfo dep_info{};
+    // bbport (BB_BARRIERS_IN_PASS): on the native Metal renderer a barrier encodes nothing
+    // (MetalFrame::Barrier: Metal orders the encoders), so ending the open render pass for one
+    // only stores and reloads its attachments. The pass stays open unless its own draws may have
+    // written what is waited for (a graphics-stage write since the last flush) or an image
+    // barrier is on one of its attachments (sampling it needs the pass stored first).
+    bool keep_pass = false;
+#if BB_METAL_BACKEND
+    if (BarriersInPass() && !graphics_write && scheduler.IsRendering() &&
+        MetalLayer::FrameEnabled() && (memory_barrier.srcStageMask || !image_barriers.empty())) {
+        keep_pass = true;
+        if (!image_barriers.empty()) {
+            const RenderState& state = scheduler.GetRenderState();
+            std::array<VkImage, 9> images{};
+            u32 n = 0;
+            for (u32 i = 0; i < state.num_color_attachments; ++i) {
+                images[n++] = VkImage(MetalLayer::ImageOfView(state.color_attachments[i].image_view));
+            }
+            if (state.depth_stencil_attachment.image_view) {
+                images[n++] =
+                    VkImage(MetalLayer::ImageOfView(state.depth_stencil_attachment.image_view));
+            }
+            for (const auto& barrier : image_barriers) {
+                const VkImage image = static_cast<VkImage>(barrier.image);
+                for (u32 i = 0; i < n; ++i) {
+                    // An attachment whose image is not known counts as this image.
+                    keep_pass &= images[i] && images[i] != image;
+                }
+            }
+        }
+    }
+#endif
+    graphics_write = false;
 
     if (memory_barrier.srcStageMask) {
         dep_info.pMemoryBarriers = &memory_barrier;
@@ -1437,7 +1496,9 @@ void Runtime::FlushBarriers() {
         return;
     }
 
-    scheduler.EndRendering();
+    if (!keep_pass) {
+        scheduler.EndRendering();
+    }
     scheduler.Record([enc = encoder, memory = memory_barrier,
                       has_memory = dep_info.memoryBarrierCount != 0,
                       images = scheduler.RecordData(std::span<const vk::ImageMemoryBarrier2>(
