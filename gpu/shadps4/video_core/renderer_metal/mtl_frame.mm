@@ -1890,11 +1890,139 @@ void DispatchIndirect(Owned& o, VkBuffer buffer, VkDeviceSize offset) {
     ++stats.dispatches;
 }
 
+// bbport BB_COPIES_AS_COMPUTE (default on, =0 to turn it off): a small buffer copy, fill or update
+// (all regions <= BB_COPY_COMPUTE_MAX bytes, default 64 KiB) recorded while a compute encoder is
+// open runs as one vectorised compute dispatch in it (serial, so ordered with the dispatches
+// around it) instead of ending it for a blit encoder: each compute -> blit -> compute switch
+// left the GPU idle between encoders. 16 or 4 bytes per thread when aligned, else bytes;
+// overlapping regions and pending tessellation draws keep the blit. Compute bindings are never
+// cached: the next game dispatch rebinds everything.
+static bool BufferAsCompute(Owned& o, id<MTLBuffer> src, u64 src_base,
+                            id<MTLBuffer> dst, u64 dst_base, u32 count,
+                            const VkBufferCopy* regions, u8 fill) {
+    static const bool on = [] {
+        const char* env = std::getenv("BB_COPIES_AS_COMPUTE");
+        return !(env && env[0] == '0');
+    }();
+    if (!on || !o.compute || o.render || !o.pending.empty() || !count) return false;
+    static const u64 env_limit = []() -> u64 {
+        const char* e = std::getenv("BB_COPY_COMPUTE_MAX");
+        return e ? std::min<u64>(std::strtoull(e, nullptr, 0), 1ull << 30) : 65536;
+    }();
+    const u64 limit = env_limit;
+    u64 total = 0;
+    for (u32 i = 0; i < count; ++i) {
+        if (regions[i].size > limit - total) return false;
+        total += regions[i].size;
+    }
+    if (!total) return false;
+    // A single dispatch cannot preserve cross-region read/write or write/write dependencies.
+    // Checked by sorting, not pairwise: a copy-shader call can carry thousands of small regions,
+    // and comparing every pair of them on the recording thread stalled frames (costly). Very long lists stay blits.
+    if (count > 1024) return false;
+    using Span = std::pair<u64, u64>; // [start, end)
+    std::vector<Span> writes, reads;
+    writes.reserve(count);
+    for (u32 i = 0; i < count; ++i) {
+        const u64 d = dst_base + regions[i].dstOffset;
+        writes.push_back({d, d + regions[i].size});
+        if (src == dst) {
+            const u64 r = src_base + regions[i].srcOffset;
+            reads.push_back({r, r + regions[i].size});
+        }
+    }
+    std::sort(writes.begin(), writes.end());
+    for (size_t i = 1; i < writes.size(); ++i) {
+        if (writes[i].first < writes[i - 1].second) return false; // two writes overlap
+    }
+    if (src == dst) {
+        // Any read overlapping any write (the writes are sorted and disjoint now).
+        for (const Span& r : reads) {
+            auto it = std::upper_bound(writes.begin(), writes.end(), Span{r.first, ~0ull});
+            if (it != writes.begin() && std::prev(it)->second > r.first) return false;
+            if (it != writes.end() && it->first < r.second) return false;
+        }
+    }
+    struct Region { u64 src, dst; u32 end, width; };
+    static_assert(sizeof(Region) == 24);
+    std::vector<Region> rows;
+    u32 threads = 0;
+    for (u32 i = 0; i < count; ++i) {
+        const auto& r = regions[i];
+        const u64 a = src_base + r.srcOffset, b = dst_base + r.dstOffset;
+        const u64 alignment = (src ? a : 0) | b | r.size;
+        const u32 width = !(alignment & 15) ? 16 : !(alignment & 3) ? 4 : 1;
+        threads += r.size / width;
+        rows.push_back({a, b, threads, width});
+    }
+    static id<MTLComputePipelineState> pipeline;
+    static std::once_flag once;
+    std::call_once(once, [] {
+        NSString* source = @R"msl(
+#include <metal_stdlib>
+using namespace metal;
+struct Region { ulong src, dst; uint end, width; };
+struct Args { uint count, fill, copying; };
+kernel void buffer_vectors(device const uchar* src [[buffer(0)]],
+                           device uchar* dst [[buffer(1)]],
+                           constant Region* rows [[buffer(2)]],
+                           constant Args& a [[buffer(3)]], uint i [[thread_position_in_grid]]) {
+    uint lo = 0, hi = a.count;
+    while (lo < hi) {
+        uint mid = lo + (hi - lo) / 2;
+        if (i < rows[mid].end) hi = mid; else lo = mid + 1;
+    }
+    if (lo == a.count) return;
+    Region row = rows[lo];
+    uint start = lo ? rows[lo - 1].end : 0;
+    ulong off = ulong(i - start) * row.width;
+    uint pattern = a.fill * 0x01010101u;
+    if (row.width == 16)
+        *((device uint4*)(dst + row.dst + off)) = a.copying ?
+            *((device const uint4*)(src + row.src + off)) : uint4(pattern);
+    else if (row.width == 4)
+        *((device uint*)(dst + row.dst + off)) = a.copying ?
+            *((device const uint*)(src + row.src + off)) : pattern;
+    else dst[row.dst + off] = a.copying ? src[row.src + off] : uchar(a.fill);
+}
+)msl";
+        NSError* error = nil;
+        id<MTLLibrary> library = [device newLibraryWithSource:source options:nil error:&error];
+        id<MTLFunction> function = [library newFunctionWithName:@"buffer_vectors"];
+        if (function) pipeline = [device newComputePipelineStateWithFunction:function error:&error];
+        if (!pipeline) std::printf("Metal buffer kernel: %s\n", error.localizedDescription.UTF8String);
+    });
+    if (!pipeline) return false;
+    if (src) [o.compute useResource:src usage:MTLResourceUsageRead];
+    [o.compute useResource:dst usage:src == dst ? MTLResourceUsageRead | MTLResourceUsageWrite
+                                               : MTLResourceUsageWrite];
+    [o.compute setComputePipelineState:pipeline];
+    [o.compute setBuffer:src ? src : dst offset:0 atIndex:0];
+    [o.compute setBuffer:dst offset:0 atIndex:1];
+    const size_t bytes = rows.size() * sizeof(Region);
+    if (bytes <= 4096) {
+        [o.compute setBytes:rows.data() length:bytes atIndex:2];
+    } else {
+        id<MTLBuffer> table = [device newBufferWithBytes:rows.data() length:bytes
+                                               options:MTLResourceStorageModeShared];
+        if (!table) return false;
+        o.keep.push_back(table);
+        [o.compute useResource:table usage:MTLResourceUsageRead];
+        [o.compute setBuffer:table offset:0 atIndex:2];
+    }
+    struct { u32 count, fill, copying; } args{count, fill, src != nil};
+    [o.compute setBytes:&args length:sizeof(args) atIndex:3];
+    [o.compute dispatchThreads:MTLSizeMake(threads, 1, 1)
+         threadsPerThreadgroup:MTLSizeMake(std::min<NSUInteger>(256, pipeline.maxTotalThreadsPerThreadgroup), 1, 1)];
+    return true;
+}
+
 void CopyBuffer(Owned& o, VkBuffer src, VkBuffer dst, u32 count, const VkBufferCopy* regions) {
     const BufferRef s = ResolveBuffer(src), d = ResolveBuffer(dst);
     if (!s.buffer || !d.buffer) {
         return;
     }
+    if (BufferAsCompute(o, s.buffer, s.offset, d.buffer, d.offset, count, regions, 0)) return;
     id<MTLBlitCommandEncoder> blit = BlitEncoder(o);
     for (u32 i = 0; i < count; ++i) {
         [blit copyFromBuffer:s.buffer
@@ -1915,6 +2043,8 @@ void FillBuffer(Owned& o, VkBuffer dst, VkDeviceSize offset, VkDeviceSize size, 
         Log("vkCmdFillBuffer with a pattern of different bytes (filled with its low byte)");
     }
     const u64 length = size == VK_WHOLE_SIZE ? d.buffer.length - d.offset - offset : size;
+    const VkBufferCopy region{0, 0, length};
+    if (BufferAsCompute(o, nil, 0, d.buffer, d.offset + offset, 1, &region, b)) return;
     [BlitEncoder(o) fillBuffer:d.buffer range:NSMakeRange(d.offset + offset, length) value:b];
 }
 
@@ -1928,6 +2058,8 @@ void UpdateBuffer(Owned& o, VkBuffer dst, VkDeviceSize offset, VkDeviceSize size
                                                 length:size
                                                options:MTLResourceStorageModeShared];
     o.keep.push_back(staging); // the command buffer does not retain it
+    const VkBufferCopy region{0, 0, size};
+    if (BufferAsCompute(o, staging, 0, d.buffer, d.offset + offset, 1, &region, 0)) return;
     [BlitEncoder(o) copyFromBuffer:staging
                       sourceOffset:0
                           toBuffer:d.buffer
