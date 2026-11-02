@@ -32,7 +32,7 @@ BB_GAME_DIR=/path/to/your/game bash run.sh
 
 - `build.sh` is a wrapper around `CMakeLists.txt`: one preset per configuration in
   `CMakePresets.json` (`macos-arm64`, `macos-arm64-debug`, `macos-arm64-asan`, `macos-x86_64`,
-  `linux`), Ninja underneath. It builds `out/bb-probe`, the GPU library, bbcpu (from the `recomp/`
+  `linux`), Ninja underneath. It builds `out/bb-probe`, the GPU library, bbcpu (from the `bbcpu/`
   submodule) and `bb-gpu-capabilities`; `bash build.sh --test` builds the tests and runs them with
   `ctest`. Everything is built into `build/<preset>/` and then copied to `out/`, which is where
   `run.sh`, the launcher and the test scripts look (the game's own files live there too).

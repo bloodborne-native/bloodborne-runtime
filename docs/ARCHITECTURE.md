@@ -11,7 +11,7 @@ where its code is, and the switches that matter when working on it. Building and
 ```
 eboot.bin ──► loader (src/probe.c) ──► game image in memory
                                          │
-             game's x86-64 code ─────────┤  bbcpu (recomp/): translated to arm64 as it runs,
+             game's x86-64 code ─────────┤  bbcpu (bbcpu/): translated to arm64 as it runs,
                                          │  or the recompiled library (BB_RECOMP_LIB)
                                          │
              PS4 system calls ───────────┤  runtime (src/runtime_*.c): memory, threads, files,
@@ -45,8 +45,8 @@ an address in that executable.
 
 ## CPU: bbcpu and the recompiled library
 
-The game's code is x86-64. On Apple Silicon it runs through **bbcpu**
-([bbcpu](https://github.com/bloodborne-native/bbcpu), the `bbcpu/` submodule):
+The game's code is x86-64. On Apple Silicon it runs through
+**[bbcpu](https://github.com/bloodborne-native/bbcpu)** (the `bbcpu/` submodule):
 blocks are translated to arm64 the first time they run, with an interpreter as the fallback.
 Guest memory is host memory (identity mapped). A guest call to an address outside the game's code
 is a call of a host function, with the System V arguments bridged; host code calls game functions
