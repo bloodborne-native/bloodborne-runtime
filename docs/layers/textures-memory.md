@@ -57,11 +57,11 @@ each with `_Init`, `_Wait`, `_Finish` and `_Release`, and the `HiTex` step takes
 from `MapInsUpdateHelper::update`, not from distance: it walks the map's pieces and compares each one's group masks
 with the current ones, changing a limited number on each call. A piece in the current groups gets its full level,
 one in a second set the low level, and the rest are released, and a queue applies the changes. So what is in memory
-follows those masks, which the game calls backread (its debug page is `WorldBackRead`). They do not come from the camera. `WorldBackRead::update` runs a navmesh search from a tracked
+follows those masks, which the game calls backread (its debug page is `WorldBackRead`). They do not come from the camera. `WorldBackRead::update` runs a navmesh search from the player's
 position, again after 5 m of movement or a change of navmesh cell, out to the larger of its two ranges. Each collision part found enters two
 timed lists, and while one is active `WorldGroups::addCollisionGroups` adds its groups, and the groups it connects to in other map
 blocks, to one mask per block (60 blocks). `WorldGroups::update` then writes the masks to collision parts, map pieces and
-characters. So a map's textures stay by connection between areas, not by what is on screen. On a warp the tracked position is set to the player's; the writer in normal play has not been read yet. How often that happens in play has not been measured. So the engine's own texture lifetime passes through
+characters. So a map's textures stay by connection between areas, not by what is on screen. `Sprj::World::update` hands it the player's position on every frame, along with the collision part the player stands on. How often that happens in play has not been measured. So the engine's own texture lifetime passes through
 one place. That is the place to take textures from. Texture objects are filled from a source object through virtual calls, in the
 create fragment (`CSGXTextureCreateFragment`), and carry DXGI format codes: the engine's graphics layer is shaped like Direct3D 11, with a device that
 creates buffers and 2D textures from descriptions (size, mips, format, bind flags) and shader resource, render
