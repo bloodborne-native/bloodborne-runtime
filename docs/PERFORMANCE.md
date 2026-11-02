@@ -5,12 +5,12 @@
 What a frame costs, what helped, what did not, and where more could be gained. Measured on an
 Apple M3 Pro (18-core GPU, 18 GB) with copied saves and alternating runs
 ([how](BUILDING.md#measuring)), 1080p output. Every figure names its renderer, upscaler and place.
-The default is the **native Metal renderer with the upscaler off**. The game is limited by the
+The default is the **Metal renderer with the upscaler off**. The game is limited by the
 GPU; CPU time matters for heat and battery, and on weaker CPUs.
 
 ## Where it stands
 
-The default (native Metal, upscaler off, native 1080p):
+The default (Metal, upscaler off, native 1080p):
 
 | Place | FPS |
 |---|---|
@@ -31,7 +31,7 @@ For comparison:
 | The clinic at the start | MoltenVK, none | about 31 |
 | The clinic at the start | MoltenVK, FSR 3.1 Balanced (renders 1130×636) | about 44 |
 
-Native Metal is about 25–30% faster than MoltenVK at native 1080p. FSR is not offered on Metal
+The Metal renderer is about 25–30% faster than MoltenVK at native 1080p. FSR is not offered on Metal
 (MetalFX only, [decision 5](RENDER_ADAPTER.md#decisions)); FSR 3.1 and FSR 4.1.1 run only with
 the MoltenVK fallback.
 
@@ -44,7 +44,7 @@ upscalers are for outputs above 1080p, where native resolution needs too much me
 
 - **The game's code** takes about 3–5 cores through the translator, and about 14% less with the
   recompiled library at the same frame rate: 344% of one core against 402% at the 1st Floor
-  Sickroom lamp, 357% against 392% in Iosefka's Clinic. The recompiler's milestone R3 (its speed)
+  Sickroom lamp, 357% against 392% in Iosefka's Clinic. The recompiler's milestone the speed work (its speed)
   is done; its CPU work continues (bloodborne-recomp's RECOMPILATION.md, "Where the CPU time
   goes"). Six more C library calls on the host (`strncmp`, `strchr`, `strstr`, `exp2f`, `wcschr`,
   `wcscmp`) and recomp's jump tables across blocks: calls into the translator 69,600 a second to
@@ -54,7 +54,7 @@ upscalers are for outputs above 1080p, where native resolution needs too much me
   nearly all the game's operator new and delete (its own heap); CPU time measured with the
   host-call path change that follows.
 - **The renderer's GPU thread** records a draw in about 4.0–4.4 µs on Metal.
-- **The renderer's threads on native Metal** (Iosefka's Clinic, translated, 39 FPS; a 5-second
+- **The renderer's threads on Metal** (Iosefka's Clinic, translated, 39 FPS; a 5-second
   macOS sample, `SAMPLE=1`, read with `tools/sample_split.py`): recording into Metal (`DrawRec`
   and the three `VkRecorder` threads) about 1.8 cores; preparing draws ahead (six `DrawPrep`
   workers and `DrawScan`) about 0.9 core; decoding the command buffers (`GpuCommandProcessor`)
@@ -141,22 +141,12 @@ The MetalFX upscaler came from [bmy/bbport-mac](https://github.com/bmy/bbport-ma
 
 ## Where more could be gained
 
-In the order of the [native renderer's plan](NATIVE_RENDERER.md#now-and-next):
-
-1. **N2, shaders that read the engine's draw state** (N6 found its resources' slots): the
-   draw-preparation workers' user-data walk and resource reads skipped for those draws, at most
-   about a third of their 0.9 core; then the command-buffer decoding (0.6 core) for draws taken
-   from the engine. Worker threads, so most useful on CPUs weaker than the M3 Pro's.
-2. **The recompiler's CPU work** (bloodborne-recomp): less CPU time for the game's code, most
-   useful on CPUs weaker than the M3 Pro's.
-3. **N2.5, shaders converted ahead of time:** no shader conversion or pipeline build during play
-   (Metal's binary archive already keeps built pipelines between sessions).
-4. **N3, textures as objects:** the engine's own texture creation instead of inferring images
-   from GPU memory.
-5. **GPU time on Metal.** First record a Metal System Trace of the native renderer; on MoltenVK
-   the largest items were idle between encoders (6–8 ms in the clinic, from pass breaks) and
-   vertex work (shaders read constants one value at a time from storage buffers; constant
-   buffers might let Metal preload them).
+The order, by what each would gain in frame rate, CPU and memory: the app's
+[priorities](https://github.com/bloodborne-native/bloodborne-mac/blob/main/docs/ROADMAP.md#priorities). What it rests on is the
+figures above. No Metal System Trace of the native renderer exists yet: on MoltenVK the largest
+GPU items were idle between encoders (6–8 ms in the clinic, from pass breaks) and vertex work
+(shaders read constants one value at a time from storage buffers; constant buffers might let Metal
+preload them).
 
 Measuring tips: MoltenVK's GPU timestamps do not work and `ioreg`'s utilization overstates how
 busy the GPU is; use Metal System Traces.

@@ -16,7 +16,7 @@ texture, about 1-1.5 GB.
 
 ## Where it stands
 
-0%: N3 has not started. Textures are still inferred and held twice.
+0%: this has not started. Textures are still inferred and held twice.
 
 ## What is left
 

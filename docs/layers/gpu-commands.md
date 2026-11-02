@@ -7,7 +7,7 @@ them every frame to find out what to draw. That takes about 0.6 of a core.
 
 ## What we did
 
-- **Found the engine's render boundary (N6):** the engine's draw methods and the state they read.
+- **Found the engine's render boundary:** the engine's draw methods and the state they read.
   99.94% of the engine's draws match their packets, with state and resources agreeing.
 - **Every input of a draw found in the draw state:** buffer addresses and resource slots.
 - Mesh draws can bind their resources from that state.

@@ -77,9 +77,9 @@ BB_GAME_DIR=/path/to/your/game bash run.sh
 | `BB_FPS=uncap\|90\|60\|30`, `BB_FPS_LIMIT` | Frame-rate mode and limit |
 | `BB_METAL_FRAME=1`, `=0` | The Metal renderer (default on Apple Silicon) or the MoltenVK fallback; Rosetta and `BB_VK_DRIVER` always take MoltenVK/Vulkan |
 | `BB_METAL_ARCHIVE=0` | No Metal binary archive: pipelines compiled when first used and not kept between runs (the iPhone app's setting: a loaded archive takes 13–37 times its size in address space) |
-| `BB_SHADER_COMPILE=1` (`BB_SHADER_COMPILE_EXIT=1` to stop before play) | Compiles the game's shaders from its files before play, and pipelines from the engine's rules plus the states earlier sessions noted, with progress on screen; continues a stopped run, is skipped once finished, and returns when four new states have been seen (`docs/NATIVE_RENDERER.md`, N2.5). |
+| `BB_SHADER_COMPILE=1` (`BB_SHADER_COMPILE_EXIT=1` to stop before play) | Compiles the game's shaders from its files before play, and pipelines from the engine's rules plus the states earlier sessions noted, with progress on screen; continues a stopped run, is skipped once finished, and returns when four new states have been seen (`docs/NATIVE_RENDERER.md`, shaders ahead of time). |
 | `BB_PIPELINE_PLAN_CHECK=<file>` (with `BB_SHADER_COMPILE=1`) | Prints how many pipelines noted in `<file>` the rules alone plan, then exits. |
-| `BB_SHADER_PREFETCH=0`, `BB_SHADER_AHEAD=1` | New shaders' Metal libraries compiled at first use instead of on the shader threads; shaders translated ahead of the GPU thread for the draw-preparation workers, opt-in (first-play stalls 12 s to 7 s; [Native renderer](NATIVE_RENDERER.md#n25-shaders-ahead-of-time)) |
+| `BB_SHADER_PREFETCH=0`, `BB_SHADER_AHEAD=1` | New shaders' Metal libraries compiled at first use instead of on the shader threads; shaders translated ahead of the GPU thread for the draw-preparation workers, opt-in (first-play stalls 12 s to 7 s; [Native renderer](NATIVE_RENDERER.md#shaders-ahead-of-time)) |
 | `BB_METAL_NATIVE_BOOT=1`, `=0` | Set by `run.sh` (and the launcher) with `BB_METAL_FRAME`: with `1` the window and device start without the Vulkan loader or MoltenVK |
 | `BB_LAZY_TEXTURE_USAGE=0` | Every texture made with the ShaderWrite and PixelFormatView usages, as before lossless texture compression (default on: they are added once, with a copy, when a view needs one; MojahedAbushawish's lazy usages from bloodborne_mac_port) |
 | `BB_GFX_BACKEND=metal`, `=vulkan` | The render adapter backend, set by `run.sh` with the renderer |
@@ -176,14 +176,14 @@ Off by default; their output stays in the ignored `out/` (it holds game addresse
 - `BB_SHADER_LOG=1` (`vk_pipeline_cache.cpp`): one line per new shader variant (`Shader variant:`),
   with its conversion time; for a program's first variant what it is specialized for, for a
   later one which parts differ from the first. With an emptied test cache it shows what a first
-  play converts ([Native renderer](NATIVE_RENDERER.md#n25-shaders-ahead-of-time)).
+  play converts ([Native renderer](NATIVE_RENDERER.md#shaders-ahead-of-time)).
 - `BB_DRAW_CENSUS=1` (`gpu/shim/bbport_draw_census.cpp`): counts the engine's draws at its render
   boundary (the functions named in bloodborne-recomp's `annotations/functions.tsv`) and every draw
   that reaches libGnm. Every 5 seconds it prints both counts and, for the draws that reach libGnm
   without passing the boundary, their most frequent return addresses; also the most frequent
   callers of the boundary's methods, the material classes the mesh draw uses, the materials'
   parameter objects, and how often the engine's and the middleware's locks are taken. It informs
-  the renderer's step N6 ([Native renderer](NATIVE_RENDERER.md)).
+  the renderer's step the render boundary ([Native renderer](NATIVE_RENDERER.md)).
 - `BB_RENDER_BOUNDARY=observe` (`gpu/shim/bbport_render_boundary.cpp`; not with
   `BB_DRAW_CENSUS=1`): tags each draw made through the engine's draw methods with a NOP naming a
   record of its draw state, and the packet reader compares the record with the registers it
@@ -191,7 +191,7 @@ Off by default; their output stays in the ignored `out/` (it holds game addresse
   read. Every 5 seconds: the methods' calls, the tagged draws, the draw packets with and without a
   record, per field how many agree, and per kind of resource how many were found; the first three
   differences of each field are printed. It costs frame rate. Nothing is
-  drawn differently ([Native renderer](NATIVE_RENDERER.md#n6-the-engines-render-boundary)).
+  drawn differently ([Native renderer](NATIVE_RENDERER.md#the-engines-render-boundary)).
 - `BB_METAL_CAPS=compare`: the Metal backend's capability answers against MoltenVK's (above).
 - `BB_DEBUG_MOTION=1`: blends the camera-motion vectors over the frame.
 - `BB_FRAME_STATS=1`: frame statistics in the log; `BB_CB_PROBE=1`: two threads using one

@@ -8,9 +8,9 @@ result into a buffer the shader reads.
 
 ## What we did
 
-- **An inventory (N2.2):** shaders use the user data only to locate their resources.
-- **Mesh draws from the draw state (N2.3):** the flat buffer filled from the engine's state, exactly.
-- **Other draw kinds and compute (N2.4):** most read their resources straight from registers the
+- **An inventory:** shaders use the user data only to locate their resources.
+- **Mesh draws from the draw state:** the flat buffer filled from the engine's state, exactly.
+- **Other draw kinds and compute:** most read their resources straight from registers the
   engine sets.
 
 With `BB_RENDER_BOUNDARY=flat`, 92% of draw shader stages and 79% of dispatch shader stages skip the

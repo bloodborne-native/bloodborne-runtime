@@ -48,9 +48,9 @@ submodule), or as recompiled native code it generates.
 
 ## Status
 
-- The Metal renderer is the default on Apple Silicon since the app's 0.9.0 RC 1, and accepted (N5,
+- The Metal renderer is the default on Apple Silicon since the app's 0.9.0 RC 1, and accepted (the Metal backend,
   2026-10-29); MoltenVK stays selectable as a fallback. The online module ships from 0.9.0 RC 2.
-- The renderer's progress and next steps: [Native renderer](docs/NATIVE_RENDERER.md#progress).
+- The renderer's progress and next steps: [Native renderer](docs/NATIVE_RENDERER.md#the-layers).
 - Known crashes and corruption, fixed and open: [Stability](docs/STABILITY.md#open).
 - The app's releases, its roadmap and what players report:
   [bloodborne-mac](https://github.com/bloodborne-native/bloodborne-mac/blob/main/docs/STATUS.md).

@@ -8,18 +8,18 @@ to Metal.
 
 ## What we did
 
-- **A render adapter (N4):** the renderer records through the project's own GPU interface.
-- **A Metal backend (N5):** on macOS the renderer reaches Metal directly, the default since 0.9.0.
+- **A render adapter:** the renderer records through the project's own GPU interface.
+- **A Metal backend:** on macOS the renderer reaches Metal directly, the default since 0.9.0.
   MoltenVK stays selectable as a fallback. This removed one translation, not the renderer's own.
-- **Frame planning (N1):** clears deferred into the next pass's load action.
+- **Frame planning:** clears deferred into the next pass's load action.
 - **Lossless texture compression**, adapted from MojahedAbushawish's work for bloodborne_mac_port:
   36.3-36.7 FPS to 48.0-49.2 in Iosefka's Clinic on an M3 Pro.
 
 ## Where it stands
 
 0%: rendering is not native. Every frame is PS4 commands translated into Metal calls, drawing with
-shaders converted from PS4 code. The N4 and N5 milestones are finished, but a finished milestone does
-not make the layer native.
+shaders converted from PS4 code. The render adapter and the Metal backend are finished, but finishing them does not make the layer
+native.
 
 ## What is left
 

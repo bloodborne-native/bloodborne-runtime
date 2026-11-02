@@ -5,13 +5,13 @@
 The render adapter is the project's own GPU interface (`gpu/shadps4/video_core/renderer_backend/`).
 The renderer asks it for resources, passes, pipelines and commands; a backend per graphics API
 carries them out: Vulkan (Linux, and MoltenVK on macOS as a fallback) and Metal (macOS). It is
-step N4 of the [native renderer](NATIVE_RENDERER.md); the Metal backend is N5. Status and next
-steps are kept in [Native renderer](NATIVE_RENDERER.md#progress); this page is the specification.
+step the render adapter of the [native renderer](NATIVE_RENDERER.md); the Metal backend is the Metal backend. Status and next
+steps are kept in [Native renderer](NATIVE_RENDERER.md#the-layers); this page is the specification.
 
 **State.** A0–A6 and M1–M4 are implemented. The renderer records through the adapter; on Apple
 Silicon the Metal backend is the default and owns its device, queue, resources, synchronization,
 presentation and MetalFX without linking or loading the Vulkan loader or MoltenVK. M4 is
-**accepted** (N5, the maintainer, 2026-10-29). MoltenVK stays selectable (`BB_METAL_FRAME=0`) until
+**accepted** (the Metal backend, the maintainer, 2026-10-29). MoltenVK stays selectable (`BB_METAL_FRAME=0`) until
 the maintainer decides whether the fallback leaves the macOS app; only that path loads the Vulkan
 loader and its driver. Linux keeps the Vulkan backend.
 
@@ -19,14 +19,14 @@ loader and its driver. Linux keeps the Vulkan backend.
 
 The goal is a native port: the game's code recompiled ahead of time, its shaders converted ahead
 of time, and its graphics drawn by the project's own renderer. The renderer began as shadPS4's
-Vulkan renderer. Every later step (N2 shaders, N3 textures, N6 the engine's draws) needs a
+Vulkan renderer. Every later step (the draw-state work shaders, textures as objects textures, the render boundary the engine's draws) needs a
 renderer API that is not shadPS4's Vulkan code, so the adapter is designed around what a renderer
 needs; shadPS4's code is its first client, retired piece by piece. The cost: shadPS4 upstream
 fixes no longer merge cleanly and are ported by hand, as bbport's already are.
 
 | Part | With the adapter |
 |---|---|
-| Packet reader (`amdgpu/`), bbport's parallel draw preparation | Unchanged (until N6) |
+| Packet reader (`amdgpu/`), bbport's parallel draw preparation | Unchanged (until the render boundary) |
 | Shader recompiler (GCN → IR → SPIR-V) | Unchanged; its output is an adapter shader source |
 | Texture and buffer caches (detiling, overlaps, invalidation, page tracking, the guest pool) | Logic unchanged; objects, copies and accesses through the adapter |
 | Rasterizer (draw state, pipeline keys, draw preparation) | Records adapter commands; names no Vulkan type |
