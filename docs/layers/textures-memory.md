@@ -53,7 +53,9 @@ is created and leaves when destroyed, its size added to a running total in bytes
 total in MiB, so the game itself knows how much it holds (an image keeps its size in bytes at `+0x58`). Textures come from file resources: character, parts and model packs, loose `.tpf` files and start-up data. A
 map loads in tiers, each a run of steps in `MapRes`'s state machine: the model, then `LoTex`, `LoHiTex` and `HiTex`,
 each with `_Init`, `_Wait`, `_Finish` and `_Release`, and the `HiTex` step takes its holds through
-`TexRepository::findOrCreate`. So the game streams map textures by tier and releases them itself. The level comes
+`TexRepository::findOrCreate`. Each tier's `_Init` step opens its textures through `MapTextureSet::load`, as
+`tpfbnd:/name.tpf` for each texture entry of the model: `LoTex` fills one set, `LoHiTex` and `HiTex` the other, and each
+entry carries two names, chosen by a flag in the set. So the game streams map textures by tier and releases them itself. The level comes
 from `MapInsUpdateHelper::update`, not from distance: it walks the map's pieces and compares each one's group masks
 with the current ones, changing a limited number on each call. A piece in the current groups gets its full level,
 one in a second set the low level, and the rest are released, and a queue applies the changes: pieces with work wait in a list, which runs their steps each frame and drops each one when it is done. Releases do not happen at once: the world keeps a list of up to 1,000 of them, for held textures and
