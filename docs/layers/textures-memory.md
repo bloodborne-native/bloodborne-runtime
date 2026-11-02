@@ -32,7 +32,8 @@ heap with the last reference. The graphics device also keeps live totals of what
 and buffers among them: a resource leaves its section on destruction, taking its size from a running total in
 bytes, kept beside the count and the total in MiB, so the game itself knows how much it holds (an image keeps its size in bytes at `+0x58`). How often that happens in play has not been measured. So the engine's own texture lifetime passes through
 one place. That is the place to take textures from. Texture objects are filled from a source object through virtual calls, in the
-create fragment (`CSGXTextureCreateFragment`), and carry DXGI-style format codes; the GUI's textures map sRGB
+create fragment (`CSGXTextureCreateFragment`), and carry DXGI format codes: the engine's graphics layer is shaped like Direct3D 11, with a device that
+creates a 2D texture from a description (size, mips, format, bind flags) and views onto it, as a depth target does; the GUI's textures map sRGB
 formats to their linear ones the same way.
 
 ## Where it stands
