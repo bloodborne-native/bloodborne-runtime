@@ -23,7 +23,10 @@ bytes). Every resource goes through the same base, `FD4ResCapHolder`, with two c
 hash of its name at `+0x18`, only when both are clear. A texture with both clear is destroyed; one with no
 references left but still held stays, with its handle pointed at the default texture, the one `TexResCap` uses
 when given none. The handle drops its reference to the old image, and the last reference to go runs the image's
-destructor, so a held texture keeps its name and gives up its image. So the engine's own texture lifetime passes through
+destructor, so a held texture keeps its name and gives up its image. Creation comes back to that state on purpose: `TexRepository::createBatch` takes a list of
+file entries, makes one image object per kind of texture on the work pool, waits for them and sets them on
+their handles, and for a name it finds with no references but still held it builds the image again in the same
+entry. So the engine unloads textures and restores them itself. So the engine's own texture lifetime passes through
 one place. That is the place to take textures from. Texture objects are filled from a source object through virtual calls, in the
 create fragment (`CSGXTextureCreateFragment`), and carry DXGI-style format codes; the GUI's textures map sRGB
 formats to their linear ones the same way.
