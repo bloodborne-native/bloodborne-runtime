@@ -12,6 +12,7 @@ Player guides (installation, game files, settings, mods, troubleshooting) are in
   play, hooks in the game's code, the renderer, settings and the menu.
 - [Building, running and testing](BUILDING.md): build, environment, test runs, measuring,
   diagnostics.
+- [The PS4 layers](layers/README.md): what stands in for a PS4 in this repository, and what is left.
 - [Performance](PERFORMANCE.md): what a frame costs on a Mac, what helped and what did not.
 - [Stability](STABILITY.md): crashes and corruption fixed and still open, and how to investigate.
 - [Native renderer](NATIVE_RENDERER.md): milestone R5, drawing with each platform's own GPU API:

@@ -8,6 +8,8 @@ multiplatform: one shared core, and thin backends for Vulkan (Linux, Windows) an
 It is the graphics half of the native port; the CPU half is the
 [recompiler](https://github.com/bloodborne-native/bloodborne-recomp/blob/main/docs/RECOMPILATION.md).
 
+This is the goal, not what runs today: every frame is still translated from PS4 commands, and a
+finished step below is a finished step, not a native layer ([the PS4 layers](layers/README.md)).
 This page is the renderer's status and plan. The GPU interface it is built on is specified in
 [Render adapter](RENDER_ADAPTER.md); what a frame costs is in [Performance](PERFORMANCE.md).
 
@@ -15,7 +17,7 @@ This page is the renderer's status and plan. The GPU interface it is built on is
 
 1. **Multiplatform.** Nothing works on Metal only. Planning a frame, tracking resources and
    converting shaders happen in the shared core; a backend only speaks its API.
-2. **Always playable.** Native Metal is the default on Apple Silicon, accepted (N5, 2026-10-29); the
+2. **Always playable.** The Metal renderer is the default on Apple Silicon, accepted (N5, 2026-10-29); the
    MoltenVK renderer stays selectable (`BB_METAL_FRAME=0`) until the maintainer decides whether the
    fallback leaves the macOS app.
 3. **Measured.** Each step is compared against the path it replaces in alternating runs: FPS,
