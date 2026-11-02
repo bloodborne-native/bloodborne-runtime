@@ -56,7 +56,7 @@ each with `_Init`, `_Wait`, `_Finish` and `_Release`, and the `HiTex` step takes
 `TexRepository::findOrCreate`. So the game streams map textures by tier and releases them itself. The level comes
 from `MapInsUpdateHelper::update`, not from distance: it walks the map's pieces and compares each one's group masks
 with the current ones, changing a limited number on each call. A piece in the current groups gets its full level,
-one in a second set the low level, and the rest are released, and a queue applies the changes. So what is in memory
+one in a second set the low level, and the rest are released, and a queue applies the changes, at most ten on a frame, starting from one and doubling while it stays busy. So what is in memory
 follows those masks, which the game calls backread (its debug page is `WorldBackRead`). They do not come from the camera. `WorldBackRead::update` runs a navmesh search from the player's
 position, again after 5 m of movement or a change of navmesh cell, out to the larger of its two ranges. Each collision part found enters two
 timed lists, and while one is active `WorldGroups::addCollisionGroups` adds its groups, and the groups it connects to in other map
