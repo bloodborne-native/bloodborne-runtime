@@ -28,7 +28,7 @@ file entries, makes one image object per kind of texture on the work pool, waits
 their handles, and for a name it finds with no references but still held it builds the image again in the same
 entry. So the engine unloads textures and restores them itself. The unload starts when a `.tpf` file resource goes: `TpfResCap`'s destructor releases
 each texture it made, and an image's destructor drops a shared storage object at `+0x40`, which goes back to its
-heap with the last reference. Volume textures take their pixels from one of two heaps the device holds, chosen by a flag in their description, or from heaps the caller passes. The graphics device also keeps live totals of what it holds, six sections of images `0x38` bytes apart, in
+heap with the last reference. Textures take their pixels from one of two heaps given to the device when its own thread creates it, chosen by a flag in their description, or from heaps the caller passes. Which memory those heaps hold has not been read yet. The graphics device also keeps live totals of what it holds, six sections of images `0x38` bytes apart, in
 order 2D textures, cube textures, render targets, depth targets and two more, and one for what look like shaders: a resource joins its section when it
 is created and leaves when destroyed, its size added to a running total in bytes, kept beside the count and the
 total in MiB, so the game itself knows how much it holds (an image keeps its size in bytes at `+0x58`). Textures come from file resources: character, parts and model packs, loose `.tpf` files and start-up data. A
