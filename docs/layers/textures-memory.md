@@ -63,7 +63,7 @@ follows those masks, which the game calls backread (its debug page is `WorldBack
 position, again after 5 m of movement or a change of navmesh cell, out to the larger of its two ranges. Each collision part found enters two
 timed lists, and while one is active `WorldGroups::addCollisionGroups` adds its groups, and the groups it connects to in other map
 blocks, to one mask per block (60 blocks). `WorldGroups::update` then writes the masks to collision parts, map pieces and
-characters. So a map's textures stay by connection between areas, not by what is on screen. `Sprj::World::update` hands it the player's position on every frame, along with the collision part the player stands on. How often that happens in play has not been measured. So the engine's own texture lifetime passes through
+characters. Characters use them too: `WorldChrMan::updateBackread` sets each one's state from the masks, the nearest first, up to a limit. So a map's textures stay by connection between areas, not by what is on screen. `Sprj::World::update` hands it the player's position on every frame, along with the collision part the player stands on. How often that happens in play has not been measured. So the engine's own texture lifetime passes through
 one place. That is the place to take textures from. Texture objects are filled from a source object through virtual calls, in the
 create fragment (`CSGXTextureCreateFragment`), and carry DXGI format codes: the engine's graphics layer is shaped like Direct3D 11, with a device that
 creates buffers and 2D textures from descriptions (size, mips, format, bind flags) and shader resource, render
