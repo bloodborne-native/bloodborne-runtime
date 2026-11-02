@@ -46,7 +46,7 @@ The game's heaps have fixed sizes, in a table of the executable with a row per b
 | `DEBUG` (flexible) | 32 |
 | Others | 57 |
 
-`GFX_GraphicsPrivateMix` joins the two private heaps, 3,173 MiB, so textures that take this default fit in that on a PS4. Whether render targets and other buffers share it has not been read yet.
+`GFX_GraphicsPrivateMix` joins the two private heaps, 3,173 MiB, so textures that take this default fit in that on a PS4. Render targets are made by the same call and share it unless their caller passes heaps; whether callers do has not been read yet.
  The graphics device also keeps live totals of what it holds, six sections of images `0x38` bytes apart, in
 order 2D textures, cube textures, render targets, depth targets and two more, and one for what look like shaders: a resource joins its section when it
 is created and leaves when destroyed, its size added to a running total in bytes, kept beside the count and the
