@@ -18,11 +18,11 @@ The engine does track its textures itself: `TexRepository` is a hash table of re
 keyed by a path that ignores case and slash direction, and a texture can have an `_l` low-resolution
 partner. `annotations/functions.tsv` in bloodborne-recomp names what is known of it, the repository's constructor, its
 lookups and the Tpf repository beside it, and a class's size comes from the executable (`TexRepositoryImp`, 216
-bytes). Every resource goes through the same base: `FD4ResCapHolder::release` drops a count at `+0x60` of the
-`FD4ResCap` and unlinks it from the holder's table, keyed by the same hash of its name at `+0x18`, once that
-count reaches zero and a second one at `+0x64` is not positive. The texture repository's own release goes through it: a texture whose counts are done is destroyed, and
-one whose count at `+0x60` is zero while the one at `+0x64` is still positive stays, with its handle pointed at a
-texture a singleton holds, which looks like a placeholder. So the engine's own texture lifetime passes through
+bytes). Every resource goes through the same base, `FD4ResCapHolder`, with two counts: one at `+0x60` and a hold at
+`+0x64`, which map, object and material code release. A resource leaves the holder's table, keyed by the same
+hash of its name at `+0x18`, only when both are clear. A texture with both clear is destroyed; one with no
+references left but still held stays, with its handle pointed at a texture a global object holds, which looks
+like a placeholder. So the engine's own texture lifetime passes through
 one place. That is the place to take textures from. Texture objects are filled from a source object through virtual calls, in the
 create fragment (`CSGXTextureCreateFragment`), and carry DXGI-style format codes; the GUI's textures map sRGB
 formats to their linear ones the same way.
