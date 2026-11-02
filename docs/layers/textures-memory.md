@@ -56,7 +56,7 @@ each with `_Init`, `_Wait`, `_Finish` and `_Release`, and the `HiTex` step takes
 `TexRepository::findOrCreate`. So the game streams map textures by tier and releases them itself. The level comes
 from `MapInsUpdateHelper::update`, not from distance: it walks the map's pieces and compares each one's group masks
 with the current ones, changing a limited number on each call. A piece in the current groups gets its full level,
-one in a second set the low level, and the rest are released, and a queue applies the changes. Releases do not happen at once: the world keeps a list of up to 1,000 of them, for held textures and
+one in a second set the low level, and the rest are released, and a queue applies the changes: pieces with work wait in a list, which runs their steps each frame and drops each one when it is done. Releases do not happen at once: the world keeps a list of up to 1,000 of them, for held textures and
 file resources, and works through at most ten on a frame, starting from one and doubling while it stays busy. When the list is full the oldest runs at once, so textures
 a piece gave up stay in memory for a little while after it leaves. So what is in memory
 follows those masks, which the game calls backread (its debug page is `WorldBackRead`). They do not come from the camera. `WorldBackRead::update` runs a navmesh search from the player's
