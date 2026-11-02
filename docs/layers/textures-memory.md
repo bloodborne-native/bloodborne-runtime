@@ -28,8 +28,8 @@ file entries, makes one image object per kind of texture on the work pool, waits
 their handles, and for a name it finds with no references but still held it builds the image again in the same
 entry. So the engine unloads textures and restores them itself. The unload starts when a `.tpf` file resource goes: `TpfResCap`'s destructor releases
 each texture it made, and an image's destructor drops a shared storage object at `+0x40`, which goes back to its
-heap with the last reference. The graphics device also keeps live totals of what it holds, six sections of images `0x38` bytes apart, 2D
-textures first and depth targets fourth, and one for what look like shaders: a resource joins its section when it
+heap with the last reference. The graphics device also keeps live totals of what it holds, six sections of images `0x38` bytes apart, in
+order 2D textures, cube textures, render targets, depth targets and two more, and one for what look like shaders: a resource joins its section when it
 is created and leaves when destroyed, its size added to a running total in bytes, kept beside the count and the
 total in MiB, so the game itself knows how much it holds (an image keeps its size in bytes at `+0x58`). How often that happens in play has not been measured. So the engine's own texture lifetime passes through
 one place. That is the place to take textures from. Texture objects are filled from a source object through virtual calls, in the
