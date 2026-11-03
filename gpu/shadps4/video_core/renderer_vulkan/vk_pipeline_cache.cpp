@@ -640,15 +640,25 @@ void PipelineCache::NoteForCompile(const PipelineSelection& selection) {
         selection.graphics_key.fixed_quad_outer) {
         return;
     }
+    constexpr u32 control = u32(SwStage::TessellationControl), eval = u32(SwStage::TessellationEval);
+    const bool tessellated = selection.infos[control] && selection.infos[eval];
     for (u32 stage = 0; stage < MaxShaderStages; ++stage) {
-        if (selection.infos[stage] && stage != vertex && stage != fragment) {
-            return; // the step builds vertex and pixel pairs
+        if (selection.infos[stage] && stage != vertex && stage != fragment &&
+            !(tessellated && (stage == control || stage == eval))) {
+            return; // the step builds vertex and pixel pairs, and tessellated draws
         }
+    }
+    // A tessellated draw: its vertex program is the local one, and the key keeps the hull and
+    // domain programs where it keeps their stage hashes.
+    auto key = selection.graphics_key;
+    if (tessellated) {
+        key.stage_hashes[control] = selection.infos[control]->pgm_hash;
+        key.stage_hashes[eval] = selection.infos[eval]->pgm_hash;
     }
     NotePipeline(Common::FS::GetUserPath(Common::FS::PathType::CacheDir) / "pipelines-seen.bin",
                  {.vertex = selection.infos[vertex]->pgm_hash,
                   .pixel = selection.infos[fragment] ? selection.infos[fragment]->pgm_hash : 0,
-                  .key = selection.graphics_key});
+                  .key = key});
 }
 
 const GraphicsPipeline* PipelineCache::FinishPipeline(const GraphicsPipelineKey& key,
@@ -1358,6 +1368,8 @@ struct AheadShader {
     std::vector<u32> spirv;
 };
 static std::vector<AheadShader> ahead_queue;
+/// Each tessellated set's hull and domain SPIR-V (0: not translated).
+static std::map<TessStages, std::pair<u64, u64>> tess_spirv;
 // Bindings can each hold something else (a copy between two formats, a volume written from a
 // plane): the last translation's shape, and the guess for each binding of the next one.
 static struct {
@@ -1410,6 +1422,9 @@ static u64 SpirvFor(u64 program, const std::vector<u8>& classes) {
 }
 static std::array<u32, 4> list_format{};
 static u32 list_image = 0;
+/// Tessellation stages: the constants the next translation reads, and the SPIR-V it made.
+static const Shader::TessellationDataConstantBuffer* list_tess{};
+static u64 list_last_spirv = 0;
 
 /// Builds the planned pipelines on half the cores; what an earlier run built is skipped, and a run
 /// stopped midway resumes.
@@ -1462,6 +1477,20 @@ static void BuildPlanned(std::span<const AheadPipeline> planned, u32 states,
                 ++no_shader;
                 continue;
             }
+            // A tessellated draw: its hull and domain translations for this local program.
+            constexpr u32 control_stage = u32(SwStage::TessellationControl),
+                          eval_stage = u32(SwStage::TessellationEval);
+            const u64 hull = pipeline.key.stage_hashes[control_stage];
+            std::pair<u64, u64> tess{};
+            if (hull != 0) {
+                const auto it = tess_spirv.find(
+                    {pipeline.vertex, hull, u64(pipeline.key.stage_hashes[eval_stage])});
+                if (it == tess_spirv.end() || it->second.first == 0 || it->second.second == 0) {
+                    ++no_shader;
+                    continue;
+                }
+                tess = it->second;
+            }
             constexpr u32 vertex_stage = u32(SwStage::Vertex), pixel_stage = u32(SwStage::Fragment);
             std::array<vk::ShaderModule, MaxShaderStages> stages{};
             std::array<bool, MaxShaderStages> has{};
@@ -1480,6 +1509,16 @@ static void BuildPlanned(std::span<const AheadPipeline> planned, u32 states,
                 }
                 stages[pixel_stage] = pixel_module->second;
                 has[pixel_stage] = true;
+            }
+            if (hull != 0) {
+                const auto control = modules.find(tess.first), eval = modules.find(tess.second);
+                if (control == modules.end() || eval == modules.end()) {
+                    ++no_shader;
+                    continue;
+                }
+                stages[control_stage] = control->second;
+                stages[eval_stage] = eval->second;
+                has[control_stage] = has[eval_stage] = true;
             }
             std::vector<MetalShadow::VertexInput> inputs;
             for (u32 attribute = 0; attribute < MaxVertexBufferCount &&
@@ -1639,6 +1678,7 @@ __attribute__((noinline)) int PipelineCache::TranslateForCompile(HwStage hw, SwS
     guess.list_swizzle = list_format[3];
     guess.list_buffers = list_buffers;
     guess.list_images = list_images;
+    guess.tess_override = list_tess;
     Shader::Backend::Bindings next{};
     if (sw != SwStage::Compute) {
         next.EnterStage(u32(sw));
@@ -1657,6 +1697,7 @@ __attribute__((noinline)) int PipelineCache::TranslateForCompile(HwStage hw, SwS
         }
         const auto spv = Shader::Backend::SPIRV::EmitSPIRV(profile, rt, ir, next);
         const u64 spirv_hash = XXH3_64bits(spv.data(), spv.size() * 4);
+        list_last_spirv = spirv_hash;
         auto& made = program_spirv[params.hash];
         if (std::none_of(made.begin(), made.end(), [](const auto& entry) { return entry.first == translating_classes; })) {
             made.emplace_back(translating_classes, spirv_hash);
@@ -1831,8 +1872,12 @@ void PipelineCache::CompileAheadWork() {
             }
             continue;
         }
+        if (kind == 7 || shader.domain) {
+            continue; // translated below, with the programs they run with
+        }
         const bool fragment = kind == 2;
-        const auto hw = fragment ? HwStage::Fragment : HwStage::Vertex;
+        const bool local = kind == 6; // the vertex stage of a tessellated draw
+        const auto hw = fragment ? HwStage::Fragment : local ? HwStage::Local : HwStage::Vertex;
         const auto sw = fragment ? SwStage::Fragment : SwStage::Vertex;
         const std::span<const u32> code{blob.data() + offset / 4, length / 4};
         const auto& input_order = shader.input_order;
@@ -1871,11 +1916,16 @@ void PipelineCache::CompileAheadWork() {
                     colour.swizzle = AmdGpu::IdentityMapping;
                 }
             } else {
-                rt.props.num_input_vgprs = exe ? 0 : 3;
-                // The only output map the game sets; a shader with no such export is unchanged.
-                rt.hw.vs.num_outputs = 1;
-                rt.hw.vs.outputs[0][0] = Shader::Output::ClipDist0;
-                rt.hw.vs.outputs[0][1] = Shader::Output::ClipDist1;
+                if (local) {
+                    rt.props.num_input_vgprs = (rsrc1 >> 24) & 3;
+                    rt.hw.ls.ls_stride = shader.ls_stride;
+                } else {
+                    rt.props.num_input_vgprs = exe ? 0 : 3;
+                    // The only output map the game sets; a shader with no such export is unchanged.
+                    rt.hw.vs.num_outputs = 1;
+                    rt.hw.vs.outputs[0][0] = Shader::Output::ClipDist0;
+                    rt.hw.vs.outputs[0][1] = Shader::Output::ClipDist1;
+                }
                 fetch.emplace();
                 u32 index = 0;
                 const auto no_attributes = std::vector<u8>{};
@@ -1927,6 +1977,103 @@ void PipelineCache::CompileAheadWork() {
                 }
             }
         }
+    }
+    // Tessellation: each hull program with the local programs that feed it and the domain
+    // programs that follow it, paired by file name in their bundle. What the game sets for the
+    // draw comes from their headers: the strides, the control points, the tessellation type.
+    {
+        std::unordered_map<u64, const ScannedShader*> by_hash;
+        for (const auto& p : scan.shaders) {
+            by_hash.emplace(p.hash, &p);
+        }
+        const auto translate = [&](const ScannedShader& p, HwStage hw, SwStage sw,
+                                   const Shader::TessellationDataConstantBuffer& constants,
+                                   auto&& fill) -> u64 {
+            Shader::RuntimeInfo rt{};
+            rt.Initialize(hw, sw);
+            rt.props.num_user_data = (p.rsrc2 >> 1) & 0x1f;
+            rt.props.num_input_vgprs = (p.rsrc1 >> 24) & 3;
+            rt.props.num_allocated_vgprs = ((p.rsrc1 & 0x3f) + 1) * 4;
+            rt.props.fp_round_mode32 = AmdGpu::FpRoundMode((p.rsrc1 >> 12) & 3);
+            rt.props.fp_round_mode16_64 = AmdGpu::FpRoundMode((p.rsrc1 >> 14) & 3);
+            rt.props.fp_denorm_mode32 = AmdGpu::FpDenormMode((p.rsrc1 >> 16) & 3);
+            rt.props.fp_denorm_mode16_64 = AmdGpu::FpDenormMode((p.rsrc1 >> 18) & 3);
+            fill(rt);
+            const std::span<const u32> code{blob.data() + p.offset / 4, p.length / 4};
+            const Shader::ShaderParams params{
+                .user_data = std::span<const u32, Shader::ShaderParams::NumShaderUserData>{
+                    zero_ud.data(), Shader::ShaderParams::NumShaderUserData},
+                .code = code,
+                .hash = p.hash,
+            };
+            watch_ticket.fetch_add(1);
+            translating_classes = {};
+            list_tess = &constants;
+            list_last_spirv = 0;
+            const int why = TranslateForCompile(hw, sw, params, rt, code, nullptr, nullptr);
+            list_tess = nullptr;
+            if (why != 0) {
+                ++(why == 2 ? asserts : why == 3 ? exceptions : faults);
+                std::printf("Shader compile: not translated (%s): %s %s\n",
+                            why == 2 ? "assertion" : why == 3 ? "exception" : "fault",
+                            p.bundle.c_str(), p.name.c_str());
+                return 0;
+            }
+            return list_last_spirv;
+        };
+        std::map<std::pair<u64, u32>, u64> hull_spirv;   // by program and local stride
+        std::map<std::tuple<u64, u32, u32>, u64> domain_spirv; // by program, stride, registers
+        u32 triples = 0, missing = 0;
+        for (const TessStages& set : TessellationSets(scan)) {
+            const ScannedShader* l = by_hash.at(set.local);
+            const ScannedShader* h = by_hash.at(set.hull);
+            const ScannedShader* d = by_hash.at(set.domain);
+            Shader::TessellationDataConstantBuffer tc{};
+            tc.ls_stride = l->ls_stride;
+            tc.hs_cp_stride = h->output_stride ? h->output_stride : l->ls_stride;
+            tc.num_patches = 15; // the patch terms are 0 in translation: any count is one shader
+            tc.hs_output_base = h->output_stride ? h->input_points * l->ls_stride * tc.num_patches : 0;
+            tc.patch_output_size = tc.hs_cp_stride * h->output_points;
+            tc.patch_const_size = 16 * h->patch_constants;
+            tc.patch_const_base = tc.hs_output_base + tc.patch_output_size * tc.num_patches;
+            tc.off_chip_tessellation_factor_threshold = 512.0f;
+            tc.first_edge_tess_factor_index = h->first_edge;
+            const auto config = std::bit_cast<AmdGpu::TessellationConfig>(h->tess_param & 0xff);
+            auto hs = hull_spirv.find({h->hash, tc.ls_stride});
+            if (hs == hull_spirv.end()) {
+                ++programs;
+                const u64 made = translate(*h, HwStage::Hull, SwStage::TessellationControl, tc,
+                                           [&](Shader::RuntimeInfo& rt) {
+                    rt.sw.tcs.num_input_control_points = h->input_points;
+                    rt.sw.tcs.num_threads = h->threads;
+                    rt.sw.tcs.tess_type = config.type;
+                    rt.sw.tcs.offchip_lds_enable = (h->rsrc2 >> 7) & 1;
+                });
+                hs = hull_spirv.emplace(std::pair{h->hash, tc.ls_stride}, made).first;
+            }
+            const std::tuple key{d->hash, tc.hs_cp_stride, h->tess_param & 0xff};
+            auto ds = domain_spirv.find(key);
+            if (ds == domain_spirv.end()) {
+                ++programs;
+                const u64 made = translate(*d, HwStage::Vertex, SwStage::TessellationEval, tc,
+                                           [&](Shader::RuntimeInfo& rt) {
+                    rt.hw.vs.num_outputs = 1;
+                    rt.hw.vs.outputs[0][0] = Shader::Output::ClipDist0;
+                    rt.hw.vs.outputs[0][1] = Shader::Output::ClipDist1;
+                    rt.sw.tes.tess_type = config.type;
+                    rt.sw.tes.tess_topology = config.topology;
+                    rt.sw.tes.tess_partitioning = config.partitioning;
+                });
+                ds = domain_spirv.emplace(key, made).first;
+            }
+            ++triples;
+            missing += hs->second == 0 || ds->second == 0;
+            tess_spirv[set] = {hs->second, ds->second};
+        }
+        std::printf("Shader compile: tessellation: %zu hull, %zu domain translations, %u stage sets, "
+                    "%u with a stage not translated\n",
+                    hull_spirv.size(), domain_spirv.size(), triples, missing);
+        std::fflush(stdout);
     }
     watch_stop.store(true);
     watchdog.join();

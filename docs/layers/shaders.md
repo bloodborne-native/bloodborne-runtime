@@ -19,6 +19,11 @@ them once, ahead of time, rather than replace them by hand.
 - **Shaders independent of the draw** where the source never read what differed.
 - **Compute strides read at run time,** so a structure's size is no longer a shader form, and mixes
   of formats across a program's bindings.
+- **Tessellated draws:** the local, hull and domain programs pair by file name; what the game sets
+  for the draw (the strides, the control points, the tessellation type) comes from their headers,
+  and the effects' tessellated pipelines take their vertex layouts from the effects renderer's own
+  tables. A domain shader declares, and on Metal reads, every patch constant its hull program
+  writes, so both sides of the patch buffer have one layout.
 - **One text per shader on Metal:** translations that differ only in numbering are one source.
 - **No planned pipeline fails to build:** rect lists are planned only for vertex shaders that fetch
   no attributes, each pipeline gets the vertex translation made for its attributes' number types,
@@ -27,23 +32,23 @@ them once, ahead of time, rather than replace them by hand.
 
 ## Where it stands
 
-After the step, 253 of the 295 sources one session in Iosefka's Clinic used were already built
-(86%): 132 of 136 fragment, 83 of 93 vertex, 38 of 61 compute and 0 of 5 tessellation.
+After the step, 285 of the 304 shaders one session in Iosefka's Clinic made from the game's
+programs were already made (94%): 142 of 152 fragment, 102 of 107 vertex, 34 of 48 compute and all
+7 tessellation stages. (The session's other 10 tessellation modules are the renderer's own, for
+rect and quad lists.)
 
-The step builds 2,383,031 pipelines and none fails (before: 656,734 of 3.3 million failed). 71,073
-planned pipelines have no shader: one of their programs was not translated (the translator stops
-on 167 programs). Of the 207 pipelines one test session noted, the rules plan all 207.
+The step builds 2,409,298 pipelines and none fails (before: 656,734 of 3.3 million failed); every
+planned pipeline has its shaders, and the translator stops on none of the game's programs. Of the
+243 pipelines test sessions noted, tessellated draws included, the rules plan all 243.
 
 From empty caches, a first play's worst frame is 561 ms, with 10 frames over 100 ms. That is one run,
 standing still. With no step at all it was 1.9 s; with recorded states it is 258 ms. From empty
-caches the step takes 76 s on an M3 Pro (one run): 14,732 shaders and 2,383,031 pipelines.
+caches the step takes 103 s on an M3 Pro (one run): 15,242 shaders and 2,409,298 pipelines.
 
 ## What is left
 
-- The 167 programs the translator stops on (the models' water-interaction `.dpo` programs, which
-  use shared memory outside a compute stage, as tessellation stages do), and the 71,073 planned
-  pipelines left without a shader.
-- The port's own compute kernels, tessellation stages, and the vertex and fragment forms still
-  missed.
+- The geometry stages (the models' cube passes and the particles' `.gpo` programs, with the export
+  vertex programs before them), which the step does not translate yet.
+- The port's own compute kernels, and the vertex and fragment forms still missed.
 - Movement, combat and other areas, none of which are measured.
 - Vulkan's build path: planning is shared, building is per backend.

@@ -15,7 +15,7 @@ namespace Vulkan {
 /// One program: what its header gives, in the registers' own form.
 struct ScannedShader {
     u64 hash{};
-    u32 kind{}; ///< 1 vertex, 2 pixel, 4 compute
+    u32 kind{}; ///< 1 vertex (a domain program too), 2 pixel, 4 compute, 6 local, 7 hull
     u32 rsrc1{};
     u32 rsrc2{};
     u32 z_format{}; ///< pixel: export format, bit 8 front_face_all_bits; compute: thread count x
@@ -38,12 +38,26 @@ struct ScannedShader {
     std::vector<u8> pixel_inputs;    ///< pixel: each input's semantic
     std::vector<u32> attribute_sizes; ///< vertex: each attribute's components
     std::vector<std::string> semantics; ///< vertex: each attribute's semantic, when known
+    bool domain{};                   ///< a vertex program that evaluates tessellation (.dpo)
+    u32 ls_stride{};                 ///< local: the bytes each control point's outputs take
+    /// Hull: the tessellation registers (type, partitioning, topology), then the hull constants:
+    /// input and output control points, patch constants, output stride, threads, the first edge
+    /// factor's index.
+    u32 tess_param{}, input_points{}, output_points{}, patch_constants{}, output_stride{},
+        threads{}, first_edge{};
 };
 
 struct ShaderScan {
     std::vector<ScannedShader> shaders;
     std::vector<u32> code;
     std::unordered_map<std::string, u64> model_files; ///< gxflvershader: every file name's program
+    /// The tessellation stages' file names (local, hull and domain programs), each with its
+    /// bundle and program: a program can stand under several names.
+    struct File {
+        std::string bundle, name;
+        u64 hash;
+    };
+    std::vector<File> tess_files;
 };
 
 /// game_dir holds eboot.bin and dvdroot_ps4. Bundled shaders come first, as the engine prefers them.

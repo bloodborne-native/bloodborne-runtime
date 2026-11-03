@@ -8,8 +8,9 @@
 #include "video_core/renderer_vulkan/vk_shader_util.h"
 
 namespace Serialization {
-/// Metal: no buffer offset table, each stage's bindings; shaders independent of targets and meshes.
-inline constexpr u32 ShaderBinaryVersion = 28u;
+/// Metal: no buffer offset table, each stage's bindings; shaders independent of targets and meshes;
+/// tessellation stages that declare all of a hull program's patch constants.
+inline constexpr u32 ShaderBinaryVersion = 29u;
 } // namespace Serialization
 
 namespace Vulkan {

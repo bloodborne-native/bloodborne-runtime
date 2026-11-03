@@ -929,6 +929,64 @@ MetalObjects BuildLibrary(id<MTLDevice> device, const std::string& msl, const st
     return objects;
 }
 
+/// An evaluation shader with every patch input it declares loaded at the start of its entry
+/// function, the loads unused. SPIRV-Cross lays out the patch input struct from the inputs a shader
+/// reads; the control shader's struct has every patch constant, and the evaluation shader reads the
+/// same buffer per patch, so both must lay out the same members.
+std::vector<u32> TouchPatchInputs(std::span<const u32> spirv) {
+    std::vector<u32> words(spirv.begin(), spirv.end());
+    if (words.size() < 5) {
+        return words;
+    }
+    constexpr u32 OpEntryPoint = 15, OpTypePointer = 32, OpFunction = 54, OpVariable = 59,
+                  OpLoad = 61, OpDecorate = 71, OpLabel = 248, DecorationPatch = 15,
+                  StorageInput = 1;
+    std::unordered_set<u32> patch;
+    std::unordered_map<u32, u32> input_pointee;
+    std::vector<std::pair<u32, u32>> inputs; // variable, its type
+    u32 entry = 0;
+    size_t insert = 0;
+    bool in_entry = false;
+    for (size_t at = 5; at < words.size();) {
+        const u32 count = words[at] >> 16, op = words[at] & 0xffff;
+        if (count == 0 || at + count > words.size()) {
+            return {spirv.begin(), spirv.end()};
+        }
+        if (op == OpEntryPoint && count >= 3) {
+            entry = words[at + 2];
+        } else if (op == OpDecorate && count >= 3 && words[at + 2] == DecorationPatch) {
+            patch.insert(words[at + 1]);
+        } else if (op == OpTypePointer && count == 4 && words[at + 2] == StorageInput) {
+            input_pointee[words[at + 1]] = words[at + 3];
+        } else if (op == OpVariable && count >= 4 && words[at + 3] == StorageInput &&
+                   patch.contains(words[at + 2])) {
+            if (const auto it = input_pointee.find(words[at + 1]); it != input_pointee.end()) {
+                inputs.emplace_back(words[at + 2], it->second);
+            }
+        } else if (op == OpFunction && count >= 3) {
+            in_entry = words[at + 2] == entry;
+        } else if (op == OpLabel && in_entry && insert == 0) {
+            insert = at + count;
+            // Past the function's own variables, which must come first in its first block.
+            while (insert < words.size() && (words[insert] & 0xffff) == OpVariable) {
+                insert += words[insert] >> 16;
+            }
+        }
+        at += count;
+    }
+    if (insert == 0 || inputs.empty()) {
+        return words;
+    }
+    std::vector<u32> loads;
+    u32 bound = words[3];
+    for (const auto& [variable, type] : inputs) {
+        loads.insert(loads.end(), {(4u << 16) | OpLoad, type, bound++, variable});
+    }
+    words[3] = bound;
+    words.insert(words.begin() + ptrdiff_t(insert), loads.begin(), loads.end());
+    return words;
+}
+
 /// The library of each text, kept: the binary archive must never see the same function in two
 /// libraries (Convert).
 MetalObjects SharedLibrary(id<MTLDevice> device, const std::string& msl, const std::string& entry,
@@ -1173,8 +1231,12 @@ CompileResult ShaderCompiler::Compile(std::span<const u32> spirv, u64 hash, std:
         // ordinary inputs and barycentric arithmetic (P3.1b).
         std::span<const u32> module = spirv;
         PerVertexRewrite rewritten;
+        std::vector<u32> touched;
         if (variant.kind == VariantKind::GeometryKernel) {
             module = geometry.spirv;
+        } else if (variant.kind == VariantKind::TessEval) {
+            touched = TouchPatchInputs(spirv);
+            module = touched;
         } else if (scan.per_vertex) {
             rewritten = RewritePerVertexInputs(spirv);
             if (!rewritten.ok) {

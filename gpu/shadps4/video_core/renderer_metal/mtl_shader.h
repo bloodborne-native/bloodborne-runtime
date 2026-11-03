@@ -67,7 +67,7 @@ constexpr u32 kTessFirstReservedBuffer = 13;
 constexpr u32 kMaxTextures = 128;
 constexpr u32 kMaxSamplers = 16;
 /// Bump when the MSL options or the slot assignment change: it is part of the disk cache key.
-constexpr u32 kMslCacheVersion = 8; // 8: canonical text; 7, 6: UI edge stretch in vertex shaders // 5: entry point named per shader, not main0 (binary archive) // 4: 1D textures as 2D (bbport) // 3: stage input / export output layouts in the file (P7.1)
+constexpr u32 kMslCacheVersion = 10; // 10: evaluation shaders load every patch input; 8: canonical text; 7, 6: UI edge stretch in vertex shaders // 5: entry point named per shader, not main0 (binary archive) // 4: 1D textures as 2D (bbport) // 3: stage input / export output layouts in the file (P7.1)
 /// (The variants have their own cache files.)
 
 /// Where the vertex buffer of one attribute goes. The layout stride is dynamic

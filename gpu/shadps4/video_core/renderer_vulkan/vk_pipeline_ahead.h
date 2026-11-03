@@ -14,12 +14,21 @@
 
 namespace Vulkan {
 
-/// One pipeline by its programs (0: no pixel shader). `key`'s stage hashes are not used.
+/// One pipeline by its programs (0: no pixel shader). `key`'s stage hashes are not used, except
+/// a tessellated draw's: its hull and domain programs (`vertex` is then its local program).
 struct AheadPipeline {
     u64 vertex{};
     u64 pixel{};
     GraphicsPipelineKey key{};
 };
+
+/// A tessellated draw's programs, as the file names pair them.
+struct TessStages {
+    u64 local{}, hull{}, domain{};
+    auto operator<=>(const TessStages&) const = default;
+};
+/// Every local, hull and domain program set the game's files give.
+std::vector<TessStages> TessellationSets(const ShaderScan& scan);
 
 /// Adds a pipeline a session built or loaded to the player's list, once.
 void NotePipeline(const std::filesystem::path& path, const AheadPipeline& pipeline);

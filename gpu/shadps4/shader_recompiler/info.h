@@ -296,6 +296,8 @@ struct Info : InfoPersistent {
     std::vector<const void*> list_cube_insts{};
     const Gcn::FetchShaderData* fetch_override{};
     const AmdGpu::Buffer* attrib_override{};
+    /// The tessellation constants, from the programs' headers rather than game memory.
+    const TessellationDataConstantBuffer* tess_override{};
 
     void RefreshFlatBuf() {
         if (flat_override) {
@@ -312,6 +314,10 @@ struct Info : InfoPersistent {
     }
 
     void ReadTessConstantBuffer(TessellationDataConstantBuffer& tess_constants) const {
+        if (tess_override) {
+            tess_constants = *tess_override;
+            return;
+        }
         ASSERT(tess_consts_dword_offset >= 0); // We've already tracked the V# UD
         auto buf = ReadUdReg<AmdGpu::Buffer>(static_cast<u32>(tess_consts_ptr_base),
                                              static_cast<u32>(tess_consts_dword_offset));

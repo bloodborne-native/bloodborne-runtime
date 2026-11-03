@@ -172,6 +172,16 @@ void RegisterModule(vk::ShaderModule module, std::span<const u32> spirv) {
     auto metal = std::make_shared<Metal::ShaderModule>(
         std::vector<u32>(spirv.begin(), spirv.end()), hash);
     known.push_back(metal);
+    // BB_SPIRV_LOG=1: each new module's stage and hash, as the compile step records them
+    // (shaders-ahead.txt), to count what play makes that the step did not.
+    static const bool spirv_log = [] {
+        const char* env = std::getenv("BB_SPIRV_LOG");
+        return env && env[0] == '1';
+    }();
+    if (spirv_log) {
+        std::printf("SPIR-V module: %s %llx\n", Metal::ShaderStageName(Metal::ReadShaderStage(spirv)),
+                    static_cast<unsigned long long>(hash));
+    }
     s.factory.Prefetch(metal);
     s.modules[handle] = std::move(metal);
 }

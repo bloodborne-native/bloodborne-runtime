@@ -594,8 +594,14 @@ void EmitContext::DefineInputs() {
         }
 
         const u32 patch_base_location = num_attrs;
+        // bbport: a domain shader that reads patch constants declares all the hull program has, as
+        // the control shader writes them: stages that pass them in one buffer per patch (Metal)
+        // need the same layout on both sides.
+        const u32 all_patches = info.uses_patches && runtime_info.sw.tes.num_patch_constants <= 30
+                                    ? (1U << runtime_info.sw.tes.num_patch_constants) - 1
+                                    : 0;
         for (size_t index = 0; index < 30; ++index) {
-            if (!(info.uses_patches & (1U << index))) {
+            if (!((info.uses_patches | all_patches) & (1U << index))) {
                 continue;
             }
             const Id id{DefineInput(F32[4], patch_base_location + index)};
@@ -714,8 +720,12 @@ void EmitContext::DefineOutputs() {
         }
 
         const u32 patch_base_location = num_attrs;
+        // bbport: every patch constant the hull program has, written or not (see the domain side).
+        const u32 all_patches = info.uses_patches && runtime_info.sw.tcs.num_patch_constants <= 30
+                                    ? (1U << runtime_info.sw.tcs.num_patch_constants) - 1
+                                    : 0;
         for (size_t index = 0; index < 30; ++index) {
-            if (!(info.uses_patches & (1U << index))) {
+            if (!((info.uses_patches | all_patches) & (1U << index))) {
                 continue;
             }
             const Id id{DefineOutput(F32[4], patch_base_location + index)};

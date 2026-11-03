@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstring>
 #include <fstream>
 #include <map>
 #include <mutex>
@@ -102,6 +103,21 @@ bool IsRectList(const std::string& state) {
     u32 topology = 0;
     std::memcpy(&topology, state.data() + state.size() - 4, 4);
     return topology == RectList || topology == RectListNoFill;
+}
+
+constexpr u32 Patches = 0x09; ///< the topology word's primitive byte for a tessellated draw
+
+/// The topology word's low five bits are the primitive (polygon mode and clip space follow).
+bool IsPatches(const std::string& state) {
+    return (u8(state[state.size() - 4]) & 0x1f) == Patches;
+}
+
+/// A state drawn as patches of `points` control points, as the engine draws tessellated effects.
+std::string AsPatches(std::string state, u32 points) {
+    auto& primitive = state[state.size() - 4];
+    primitive = char((u8(primitive) & ~0x1f) | Patches);
+    std::memcpy(state.data(), &points, 4); // the state starts with the patch's control points
+    return state;
 }
 
 /// One state: `colours` empty for a pass that writes only depth.
@@ -361,7 +377,7 @@ void ExportPairs(const ShaderScan& scan, size_t engine_programs, std::set<std::p
     std::map<std::pair<std::string, Set>, std::vector<u64>> exact;
     std::map<std::string, std::vector<const ScannedShader*>> vertex_by_group;
     for (const auto& shader : scan.shaders) {
-        if (shader.kind == 1 && shader.bundle != "gxflvershader") {
+        if (shader.kind == 1 && !shader.domain && shader.bundle != "gxflvershader") {
             const auto group = Group(shader);
             exact[{group, Set(shader.exports.begin(), shader.exports.end())}].push_back(shader.hash);
             vertex_by_group[group].push_back(&shader);
@@ -578,10 +594,12 @@ struct FormatTable {
 };
 
 /// The engine's fixed vertex layouts, by vertex program (file name without ".vpo"): the input
-/// element arrays its renderers create those programs with (GXSimple, GUI, screen quads), as
-/// Vulkan formats in attribute order.
+/// element arrays its renderers create those programs with (GXSimple, GUI, screen quads, and the
+/// effects renderer's tables for the GXFfx and VFX programs), as Vulkan formats in attribute
+/// order. A layout applies where the program reads every element.
 const std::map<std::string, Formats, std::less<>>& EngineLayouts() {
-    constexpr u32 Bytes4 = 37, Float2 = 103, Float3 = 106, Float4 = 109;
+    constexpr u32 Bytes4 = 37, Unorm16x4 = 91, Ushort4 = 95, Half4 = 97, Float1 = 100, Uint2 = 101,
+                  Float2 = 103, Float3 = 106, Uint4 = 107, Float4 = 109;
     static const std::map<std::string, Formats, std::less<>> layouts{
         {"gxsimple_v", {Float4, Float4}},
         {"gxsimple_transform_v", {Float4, Float4}},
@@ -594,6 +612,36 @@ const std::map<std::string, Formats, std::less<>>& EngineLayouts() {
         {"gxguishader_color2", {Float3, Bytes4, Bytes4, Float2}},
         {"screenspacequadshader", {Float4, Float2}},
         {"screenspacequadshaderz", {Float4, Float2}},
+        {"gxffxbumptexture", {Float3, Bytes4, Bytes4, Bytes4, Bytes4, Float2, Float1, Float1, Float2, Float1}},
+        {"gxffxcoloronly", {Float3, Bytes4}},
+        {"gxffxdistortion", {Float3, Float2}},
+        {"gxffxlightshaft", {Float4, Float4, Float4, Float4, Float4}},
+        {"gxffxmultitexture", {Float3, Bytes4, Float4, Float2, Float2}},
+        {"gxffxpointsprite", {Float4, Bytes4}},
+        {"gxffxradialblur", {Float3, Float2, Float2}},
+        {"gxffxsoftbumptexture", {Float3, Bytes4, Bytes4, Bytes4, Bytes4, Float2, Float1, Float1, Float2, Float1}},
+        {"gxffxsoftmultitexture", {Float3, Bytes4, Float4, Float2, Float2}},
+        {"gxffxsofttexture", {Float3, Bytes4, Bytes4, Bytes4, Bytes4, Float2, Float1, Float1, Float2, Float1}},
+        {"gxffxtessellatebumptexture", {Float3, Bytes4, Float4, Unorm16x4, Float2, Float4, Float4, Float4}},
+        {"gxffxtessellatemultitexture", {Float3, Bytes4, Float4, Float4, Float4, Float2, Float4, Float4, Float4}},
+        {"gxffxtessellatepointsprite", {Float4, Bytes4}},
+        {"gxffxtessellatequadlinecoloronly", {Float3, Bytes4, Float3, Bytes4, Float3}},
+        {"gxffxtessellatesoftbumptexture", {Float3, Bytes4, Float4, Unorm16x4, Float2, Float4, Float4, Float4}},
+        {"gxffxtessellatesoftmultitexture", {Float3, Bytes4, Float4, Float4, Float4, Float2, Float4, Float4, Float4}},
+        {"gxffxtessellatesofttexture", {Float3, Bytes4, Float4, Unorm16x4, Float2, Float4, Float4, Float4}},
+        {"gxffxtessellatetexture", {Float3, Bytes4, Float4, Unorm16x4, Float2, Float4, Float4, Float4}},
+        {"gxffxtessellatetracerbumptexture", {Float3, Bytes4, Float4, Bytes4, Bytes4, Float4}},
+        {"gxffxtessellatetracertexture", {Float3, Bytes4, Float4, Bytes4, Bytes4, Float4}},
+        {"gxffxtexture", {Float3, Bytes4, Bytes4, Bytes4, Bytes4, Float2, Float1, Float1, Float2, Float1}},
+        {"vs_vfx_grid", {Float4, Float4}},
+        {"vs_vfx_optstandardparticle", {Float4, Uint2, Uint2, Uint2, Uint2}},
+        {"vs_vfx_raycastquad", {Float4}},
+        {"vs_vfx_raydataback", {Float4}},
+        {"vs_vfx_raydatafront", {Float4}},
+        {"vs_vfx_rayedgedetect", {Float4}},
+        {"vs_vfx_sparkparticle", {Float4, Float4, Float4, Float4, Float4, Float4, Float4, Float4, Float4, Float4, Float4, Float4, Float4, Float4, Float4, Float4, Ushort4, Ushort4, Ushort4, Ushort4, Float4, Float4, Float4}},
+        {"vs_vfx_standardparticle", {Float4, Half4, Half4, Half4, Half4, Half4, Half4, Half4, Half4, Half4, Half4, Half4, Ushort4, Half4, Half4, Half4, Half4, Half4, Ushort4}},
+        {"vs_vfx_wanderingvision", {Float4, Half4, Half4, Half4, Half4, Half4, Half4, Half4, Half4, Half4, Uint4, Half4, Half4, Half4, Half4, Half4, Half4, Half4, Half4, Half4, Half4, Half4}},
     };
     return layouts;
 }
@@ -616,15 +664,136 @@ struct Header {
     u32 key_size;
 };
 
+/// The models' tessellated passes: each local program's pixel programs, by file name. A pass's
+/// local program carries the pass's name or its vertex pass's, and "_pn" (the alpha-tested pass
+/// uses the plain one); the domain program is checked against the pixel program's inputs.
+std::unordered_map<u64, std::set<u64>> ModelTessPixels(const ShaderScan& scan) {
+    static constexpr std::array<std::string_view, 3> skins{"", "_skin", "_morphskin"};
+    static constexpr std::array<std::string_view, 2> instanced{"", "_ins"};
+    static constexpr std::array<std::string_view, 2> clip{"", "@[cl]"};
+    std::unordered_map<u64, std::set<u64>> out;
+    for (const auto& [file, hash] : scan.model_files) {
+        std::string_view name{file};
+        if (!name.ends_with(".ppo")) {
+            continue;
+        }
+        name.remove_suffix(4);
+        if (name.ends_with("]")) {
+            if (const size_t bracket = name.rfind("_["); bracket != name.npos) {
+                name = name.substr(0, bracket);
+            }
+        }
+        const size_t split = name.rfind('_');
+        if (split == name.npos) {
+            continue;
+        }
+        const auto token = name.substr(split + 1);
+        const auto pass = std::find(Passes.begin(), Passes.end(), token);
+        if (pass == Passes.end()) {
+            continue;
+        }
+        const std::string stem{name.substr(0, split)};
+        std::set<std::string_view> vertex_passes{token, VertexPass(size_t(pass - Passes.begin()))};
+        if (token.ends_with('a')) {
+            vertex_passes.insert(token.substr(0, token.size() - 1));
+        }
+        for (const auto vertex : vertex_passes) {
+            for (const auto skin : skins) {
+                for (const auto ins : instanced) {
+                    for (const auto cl : clip) {
+                        const auto it = scan.model_files.find(
+                            fmt::format("{}_{}{}{}_pn{}.vpo", stem, vertex, skin, ins, cl));
+                        if (it != scan.model_files.end()) {
+                            out[it->second].insert(hash);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return out;
+}
+
 } // namespace
+
+std::vector<TessStages> TessellationSets(const ShaderScan& scan) {
+    using File = ShaderScan::File;
+    const auto stem = [](const File& f) { return std::string_view{f.name}.substr(0, f.name.size() - 4); };
+    const auto plain = [](std::string_view name) {
+        std::string out{name};
+        for (const std::string_view token : {"@[cl]", "_skin", "_ins"}) {
+            for (size_t at; (at = out.find(token)) != out.npos;) {
+                out.erase(at, token.size());
+            }
+        }
+        return out;
+    };
+    std::unordered_map<u64, const ScannedShader*> by_hash;
+    for (const auto& p : scan.shaders) {
+        by_hash.emplace(p.hash, &p);
+    }
+    std::vector<const File*> locals, hulls, domains;
+    for (const auto& f : scan.tess_files) {
+        const auto it = by_hash.find(f.hash);
+        if (it == by_hash.end() || f.name.size() < 4) {
+            continue;
+        }
+        (it->second->kind == 6 ? locals : it->second->kind == 7 ? hulls : domains).push_back(&f);
+    }
+    // A local program feeds the hull of its own name, of its name and a suffix, or of its name
+    // without the skinned, instanced and clipped variants' marks.
+    const auto feeds = [&](const File& l, const File& h) {
+        const auto ls = stem(l), hs = stem(h);
+        return l.bundle == h.bundle &&
+               (ls == hs || (hs.size() > ls.size() && hs.starts_with(ls) && hs[ls.size()] == '_') ||
+                plain(ls) == hs || plain(ls) == plain(hs));
+    };
+    // A domain program follows the hull of its name; an alpha-tested pass ("dpta") the hull of its
+    // pass without the mark, when no hull has its own name.
+    const auto follows = [&](const File& d, const File& h) {
+        if (d.bundle != h.bundle) {
+            return false;
+        }
+        const std::string ds{stem(d)};
+        const auto hs = stem(h);
+        if (ds == hs) {
+            return true;
+        }
+        if (std::ranges::any_of(hulls, [&](const File* other) {
+                return other->bundle == d.bundle && stem(*other) == ds;
+            })) {
+            return false;
+        }
+        const size_t mark = ds.find("a_");
+        return mark != ds.npos && ds.substr(0, mark) + ds.substr(mark + 1) == hs;
+    };
+    std::set<TessStages> sets;
+    for (const File* h : hulls) {
+        for (const File* l : locals) {
+            if (!feeds(*l, *h)) {
+                continue;
+            }
+            for (const File* d : domains) {
+                if (follows(*d, *h)) {
+                    sets.insert({l->hash, h->hash, d->hash});
+                }
+            }
+        }
+    }
+    return {sets.begin(), sets.end()};
+}
 
 void NotePipeline(const std::filesystem::path& path, const AheadPipeline& pipeline) {
     static std::mutex mutex;
     static std::unordered_set<u64> noted;
     static bool loaded = false;
     const auto id_of = [](const AheadPipeline& p) {
+        // A tessellated draw's hull and domain programs are part of what it is.
+        const u64 hull = p.key.stage_hashes[u32(Shader::SwStage::TessellationControl)];
+        const u64 domain = p.key.stage_hashes[u32(Shader::SwStage::TessellationEval)];
         return XXH3_64bits_withSeed(reinterpret_cast<const char*>(&p.key) + FormatsStart,
-                                    sizeof(p.key) - FormatsStart, p.vertex ^ p.pixel << 1);
+                                    sizeof(p.key) - FormatsStart,
+                                    p.vertex ^ p.pixel << 1 ^ hull << 2 ^ domain << 3);
     };
     std::scoped_lock lock{mutex};
     if (!loaded) {
@@ -756,7 +925,7 @@ std::vector<AheadPipeline> PlanPipelines(const ShaderScan& scan, std::span<const
         const bool fetches = !vertex->second->attribute_sizes.empty();
         for (const auto& set : sets) {
             for (const auto& state : states) {
-                if (fetches && IsRectList(state)) {
+                if ((fetches && IsRectList(state)) || IsPatches(state)) {
                     continue;
                 }
                 AheadPipeline pipeline{.vertex = vertex_hash, .pixel = pixel_hash};
@@ -767,9 +936,73 @@ std::vector<AheadPipeline> PlanPipelines(const ShaderScan& scan, std::span<const
             }
         }
     }
+    // Tessellated draws: each set with the pixel programs that read what its domain program
+    // exports (the models' by file name), in their states drawn as patches.
+    const auto model_tess = ModelTessPixels(scan);
+    for (const auto& set : TessellationSets(scan)) {
+        const auto local = shaders.find(set.local), hull = shaders.find(set.hull),
+                   domain = shaders.find(set.domain);
+        if (local == shaders.end() || hull == shaders.end() || domain == shaders.end()) {
+            continue;
+        }
+        const std::set<u8> exports(domain->second->exports.begin(), domain->second->exports.end());
+        const auto reads_exports = [&](const ScannedShader& pixel) {
+            return std::ranges::all_of(pixel.pixel_inputs, [&](u8 input) { return exports.contains(input); });
+        };
+        std::vector<const ScannedShader*> pixels;
+        if (domain->second->bundle == "gxflvershader") {
+            if (const auto it = model_tess.find(set.local); it != model_tess.end()) {
+                for (const u64 pixel : it->second) {
+                    if (const auto p = shaders.find(pixel); p != shaders.end() && reads_exports(*p->second)) {
+                        pixels.push_back(p->second);
+                    }
+                }
+            }
+        } else {
+            for (const auto& shader : scan.shaders) {
+                if (shader.kind == 2 && shader.bundle == domain->second->bundle &&
+                    shader.pixel_inputs.size() == exports.size() && reads_exports(shader)) {
+                    pixels.push_back(&shader);
+                }
+            }
+        }
+        const auto* layout = EngineLayout(*local->second);
+        const auto sets = layout ? std::vector<Formats>{*layout} : formats.For(*local->second);
+        for (const ScannedShader* pixel : pixels) {
+            std::set<std::string> base;
+            if (const auto model = model_states.find(pixel->hash); model != model_states.end()) {
+                base = model->second;
+            } else {
+                ParticleStates(base);
+            }
+            std::set<std::string> states;
+            for (const auto& state : base) {
+                states.insert(AsPatches(state, hull->second->input_points));
+            }
+            if (const auto kind = fine.find(FineKind(*pixel)); kind != fine.end()) {
+                for (auto& state : Top(kind->second, StatesPerKind)) {
+                    if (IsPatches(state)) {
+                        states.insert(std::move(state));
+                    }
+                }
+            }
+            for (const auto& formats_set : sets) {
+                for (const auto& state : states) {
+                    AheadPipeline pipeline{.vertex = set.local, .pixel = pixel->hash};
+                    auto* bytes = reinterpret_cast<char*>(&pipeline.key);
+                    std::memcpy(bytes + StateStart, state.data(), state.size());
+                    std::memcpy(bytes + FormatsStart, formats_set.data(), formats_set.size() * sizeof(u32));
+                    pipeline.key.stage_hashes[u32(Shader::SwStage::TessellationControl)] = set.hull;
+                    pipeline.key.stage_hashes[u32(Shader::SwStage::TessellationEval)] = set.domain;
+                    out.push_back(pipeline);
+                }
+            }
+        }
+    }
     // Depth only, with no pixel shader: the engine's simple vertex programs.
     for (const auto& shader : scan.shaders) {
-        if (shader.kind != 1 || shader.bundle == "gxflvershader" || !shader.attribute_sizes.empty()) {
+        if (shader.kind != 1 || shader.domain || shader.bundle == "gxflvershader" ||
+            !shader.attribute_sizes.empty()) {
             continue; // rect lists only: see above
         }
         for (const u32 z : {DepthStencil, DepthOnly, DepthNoClamp}) {
@@ -807,7 +1040,9 @@ void CheckPlan(const ShaderScan& scan, std::span<const AheadPipeline> seen) {
     const auto whole = [&](const AheadPipeline& raw) {
         const auto pipeline = clean(raw);
         const auto* bytes = reinterpret_cast<const char*>(&pipeline.key);
-        return fmt::format("{:x}|{:x}|", pipeline.vertex, pipeline.pixel) +
+        return fmt::format("{:x}|{:x}|{:x}|{:x}|", pipeline.vertex, pipeline.pixel,
+                           pipeline.key.stage_hashes[u32(Shader::SwStage::TessellationControl)],
+                           pipeline.key.stage_hashes[u32(Shader::SwStage::TessellationEval)]) +
                std::string{bytes + FormatsStart, sizeof(pipeline.key) - FormatsStart};
     };
     std::unordered_set<std::string> exact;
@@ -916,7 +1151,7 @@ void CheckPlan(const ShaderScan& scan, std::span<const AheadPipeline> seen) {
     // Every engine vertex program: what the plan knows of its attributes and gives it.
     const FormatTable table;
     for (const auto& shader : scan.shaders) {
-        if (shader.kind != 1 || shader.bundle == "gxflvershader") {
+        if (shader.kind != 1 || shader.domain || shader.bundle == "gxflvershader") {
             continue;
         }
         std::string sizes, sets;

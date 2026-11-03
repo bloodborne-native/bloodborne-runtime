@@ -36,7 +36,7 @@ work is split by the [PS4 layers](https://github.com/bloodborne-native/bloodborn
 | [The renderer](layers/renderer.md) | 0% `░░░░░░░░░░░░░░░░░░░░` | Reaches Metal directly, through the render adapter; MoltenVK selectable as a fallback | A Metal System Trace of a frame, which has never been recorded; then working from the engine's own draws |
 | [PS4 GPU commands](layers/gpu-commands.md) | 0% `░░░░░░░░░░░░░░░░░░░░` | All decoded; the engine's draws found, behind `BB_RENDER_BOUNDARY` | Taking draws from the engine |
 | [PS4 user data](layers/user-data.md) | 0% `░░░░░░░░░░░░░░░░░░░░` | The walker runs for players; 92% of draw and 79% of dispatch stages skip it with `BB_RENDER_BOUNDARY=flat` | The rest of the draw kinds, then on by default |
-| [Shaders compiled during play](layers/shaders.md) | 86% `█████████████████░░░` | 253 of 295 sources built ahead in one area; opt-in | The remaining forms, other areas, Vulkan's build path |
+| [Shaders compiled during play](layers/shaders.md) | 94% `██████████████████░░` | 285 of 304 shaders made ahead in one area, tessellation included; opt-in | Geometry stages, the remaining forms, other areas, Vulkan's build path |
 | [PS4 textures and memory](layers/textures-memory.md) | 0% `░░░░░░░░░░░░░░░░░░░░` | Not started | Tracing where the engine creates and releases textures |
 
 The order of the work: the app's [priorities](https://github.com/bloodborne-native/bloodborne-mac/blob/main/docs/ROADMAP.md#priorities).

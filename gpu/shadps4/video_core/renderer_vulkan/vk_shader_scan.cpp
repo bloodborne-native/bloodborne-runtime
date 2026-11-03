@@ -169,6 +169,10 @@ public:
     void Add(std::string_view data, size_t header, size_t footer, bool executable,
              std::string_view bundle = {}, std::string name = {}) {
         const u64 hash = Read<u64>(data, footer + 16) & 0xffffffffULL;
+        if (const u32 kind = u8(data[header + 8]);
+            !bundle.empty() && (kind == 6 || kind == 7 || (kind == 1 && name.ends_with(".dpo")))) {
+            out.tess_files.push_back({std::string{bundle}, name, hash});
+        }
         if (seen.contains(hash)) {
             return;
         }
@@ -176,7 +180,7 @@ public:
         std::memcpy(w.data(), data.data() + header + 8,
                     std::min(sizeof(w), data.size() - header - 8));
         const u32 kind = w[0] & 0xff;
-        if (kind != 1 && kind != 2 && kind != 4) {
+        if (kind != 1 && kind != 2 && kind != 4 && kind != 6 && kind != 7) {
             return;
         }
         seen.insert(hash);
@@ -215,7 +219,23 @@ public:
             for (u32 i = 0; i < exports; ++i) {
                 shader.exports.push_back(u8(Read<u16>(data, table + i * 2)));
             }
-            AddAttributes(shader, data, footer, w);
+            shader.domain = shader.name.ends_with(".dpo");
+            AddAttributes(shader, data, footer, w, w[11] & 0xff);
+        }
+        if (kind == 6) {
+            // A local program has no export registers: its attribute count comes first, then
+            // the output stride the hull program reads its control points with.
+            shader.ls_stride = w[9];
+            AddAttributes(shader, data, footer, w, w[8] & 0xff);
+        }
+        if (kind == 7) {
+            shader.tess_param = w[8];
+            shader.input_points = w[11];
+            shader.output_points = w[12];
+            shader.patch_constants = w[13];
+            shader.output_stride = w[14];
+            shader.threads = w[15];
+            shader.first_edge = w[17];
         }
         out.shaders.push_back(std::move(shader));
     }
@@ -224,8 +244,7 @@ public:
 
 private:
     void AddAttributes(ScannedShader& shader, std::string_view data, size_t footer,
-                       const std::array<u32, 60>& w) {
-        const u32 count = w[11] & 0xff;
+                       const std::array<u32, 60>& w, u32 count) {
         bool found = false;
         u32 found_at = 0;
         for (u32 k = 12; count != 0 && k < 50 && !found; ++k) {

@@ -127,6 +127,8 @@ struct SwTessControlRuntimeInfo {
     bool offchip_lds_enable;
     u32 ls_stride;
     u32 hs_output_base;
+    /// bbport: the patch constants the hull program has (TessellationDataConstantBuffer).
+    u32 num_patch_constants;
 
     bool operator==(const SwTessControlRuntimeInfo&) const = default;
 
@@ -148,6 +150,8 @@ struct SwTessControlRuntimeInfo {
 
 struct SwTessEvalRuntimeInfo {
     u32 hs_output_cp_stride;
+    /// bbport: the patch constants the hull program has (TessellationDataConstantBuffer).
+    u32 num_patch_constants;
     AmdGpu::TessellationType tess_type;
     AmdGpu::TessellationTopology tess_topology;
     AmdGpu::TessellationPartitioning tess_partitioning;
@@ -345,8 +349,10 @@ struct RuntimeInfo {
             sw.tcs.hs_output_cp_stride = tess_constants.hs_cp_stride;
             sw.tcs.ls_stride = tess_constants.ls_stride;
             sw.tcs.hs_output_base = tess_constants.hs_output_base;
+            sw.tcs.num_patch_constants = tess_constants.patch_const_size / 16;
         } else if (sw_stage == SwStage::TessellationEval) {
             sw.tes.hs_output_cp_stride = tess_constants.hs_cp_stride;
+            sw.tes.num_patch_constants = tess_constants.patch_const_size / 16;
         }
     }
 };
