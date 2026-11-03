@@ -32,8 +32,8 @@ them once, ahead of time, rather than replace them by hand.
 
 ## Where it stands
 
-After the step, 285 of the 304 shaders one session in Iosefka's Clinic made from the game's
-programs were already made (94%): 142 of 152 fragment, 102 of 107 vertex, 34 of 48 compute and all
+After the step, 285 of the 314 shaders one session in Iosefka's Clinic made were already made
+(91%): 142 of 152 fragment, 102 of 107 vertex, 34 of 48 compute and all
 7 tessellation stages. (The session's other 10 tessellation modules are the renderer's own, for
 rect and quad lists.)
 
