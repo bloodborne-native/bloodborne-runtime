@@ -12,6 +12,8 @@
 #   KEEP_SAVE=1     keep out/test-user/savedata from the previous test run (its progress).
 # What it tests, shown at the top of the game's window (the overlay's test banner):
 #   TEST_TITLE=...  the title (default: NAME);  TEST_DETAIL=...  a second line.
+# The window comes to the front and takes the keyboard (it can be played by hand);
+# BB_BENCH_BACKGROUND=1 keeps it a background app, which macOS never gives the keyboard.
 set -euo pipefail
 cd -- "$(dirname -- "$0")/.."
 name=${1:?usage: tools/test_run.sh NAME [ENV=VALUE...]}

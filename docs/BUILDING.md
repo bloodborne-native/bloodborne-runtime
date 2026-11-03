@@ -80,6 +80,7 @@ BB_GAME_DIR=/path/to/your/game bash run.sh
 | `BB_SHADER_COMPILE=1` (`BB_SHADER_COMPILE_EXIT=1` to stop before play) | Compiles the game's shaders from its files before play, and pipelines from the engine's rules plus the states earlier sessions noted, with progress on screen; continues a stopped run, is skipped once finished, and returns when four new states have been seen (`docs/NATIVE_RENDERER.md`, shaders ahead of time). |
 | `BB_PIPELINE_PLAN_CHECK=<file>` (with `BB_SHADER_COMPILE=1`) | Prints how many pipelines noted in `<file>` the rules alone plan, then exits. |
 | `BB_SPIRV_LOG=1` (Metal) | One line per new shader module (`SPIR-V module: <stage> <hash>`), hashed as the compile step records them in `cache/shaders-ahead.txt`, with who made it (`SPIR-V module name:`) and, for a translation, its program (`SPIR-V program: play\|cache\|step <program> <hash>`): the modules a session makes that the step did not, and why. |
+| `BB_KEY_TRACE=1` | One line per key press SDL delivers (`Keyboard: <key> down`) and per change of the window's focus: whether keys reach the game. A background-only app (`SDL_MAC_BACKGROUND_APP=1`, a test with `BB_BENCH_BACKGROUND=1`) gains focus but never the keyboard. |
 | `BB_SHADER_PREFETCH=0`, `BB_SHADER_AHEAD=1` | New shaders' Metal libraries compiled at first use instead of on the shader threads; shaders translated ahead of the GPU thread for the draw-preparation workers, opt-in (first-play stalls 12 s to 7 s; [Native renderer](NATIVE_RENDERER.md#shaders-ahead-of-time)) |
 | `BB_METAL_NATIVE_BOOT=1`, `=0` | Set by `run.sh` (and the launcher) with `BB_METAL_FRAME`: with `1` the window and device start without the Vulkan loader or MoltenVK |
 | `BB_LAZY_TEXTURE_USAGE=0` | Every texture made with the ShaderWrite and PixelFormatView usages, as before lossless texture compression (default on: they are added once, with a copy, when a view needs one; MojahedAbushawish's lazy usages from bloodborne_mac_port) |
@@ -138,8 +139,9 @@ a time (`pgrep -x bb-probe` first). Test windows open on the screen.
   not as an argument) saves the character creator's frame. Part of release testing.
 - `tools/grab.sh [--screen] NAME`: saves the game's own frame as a PNG (`--screen` includes the
   in-game menu and the counter). Pictures come from the game, never from the screen.
-- Test games are background-only apps (they never become the active app, so focus and Cmd+Q
-  behave unlike a launcher game). For a test someone plays in, pass `BB_BENCH_FOREGROUND=1`.
+- Test games are normal apps: the window comes to the front and takes the keyboard, so a test can
+  be played by hand. `BB_BENCH_BACKGROUND=1` makes one a background-only app instead: it takes no
+  focus from the desktop, and never gets the keyboard (macOS does not make it the active app).
 - Scripted menu keys: `BB_MENU_KEYS_FILE=$PWD/out/menu.keys` with tokens like
   `r1 r1 down enter`; `touch out/menu.trigger` opens or closes the menu.
 - `tools/mac_bench.sh`: what `test_run.sh` runs underneath (`SAMPLE=1` takes a CPU sample,

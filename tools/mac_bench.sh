@@ -12,9 +12,10 @@ bash build.sh
 base=out/bench_${name}_$(date +%m%d_%H%M%S)
 pgrep -x bb-probe > /dev/null && { echo "A game is already running: not starting another." >&2; exit 1; }
 : > out/pad; : > out/test.clock; echo "${BASE_MASK:-0}" > out/toggles
-# The game stays in the background (no focus taken from the desktop; BB_BENCH_FOREGROUND=1: brought
-# to the front as usual). Input comes from the pad file either way.
-[[ ${BB_BENCH_FOREGROUND:-0} == 1 ]] || export SDL_MAC_BACKGROUND_APP=1
+# The game is a normal app: it comes to the front and takes the keyboard, so a test can be played
+# by hand. BB_BENCH_BACKGROUND=1: a background-only app instead (no focus taken from the desktop,
+# and no keyboard: macOS never makes it the active app). The pad file works either way.
+[[ ${BB_BENCH_BACKGROUND:-0} == 1 ]] && export SDL_MAC_BACKGROUND_APP=1
 env BB_GAME_DIR="${BB_GAME_DIR:-$HOME/Downloads/PS4/Bloodborne/CUSA03173}" \
     BB_PAD_FILE="$PWD/out/pad" BB_TEST_CLOCK="$PWD/out/test.clock" BB_TOGGLE_FILE="$PWD/out/toggles" BB_FRAME_STATS=1 \
     BB_FRAME_LOG="$PWD/$base.frames.csv" BB_FPS_LIMIT="${BB_FPS_LIMIT:-0}" \

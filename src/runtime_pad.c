@@ -461,6 +461,15 @@ static int mouse_key_down(int code) {
 static volatile uint8_t key_latch[SDL_SCANCODE_COUNT];
 static bool key_watch(void *userdata, SDL_Event *e) {
     (void)userdata;
+    /* BB_KEY_TRACE=1: the key presses and focus changes SDL delivers (whether keys reach the game). */
+    static int trace=-1;
+    if (trace<0) { const char *v=getenv("BB_KEY_TRACE"); trace=v && v[0]=='1'; }
+    if (trace) {
+        if (e->type==SDL_EVENT_KEY_DOWN && !e->key.repeat)
+            printf("Keyboard: %s down\n",SDL_GetScancodeName(e->key.scancode));
+        else if (e->type==SDL_EVENT_WINDOW_FOCUS_GAINED || e->type==SDL_EVENT_WINDOW_FOCUS_LOST)
+            printf("Keyboard: window focus %s\n",e->type==SDL_EVENT_WINDOW_FOCUS_GAINED ? "gained" : "lost");
+    }
     if (e->type==SDL_EVENT_KEY_DOWN && !e->key.repeat && (int)e->key.scancode<SDL_SCANCODE_COUNT)
         key_latch[e->key.scancode]=1;
     return true;
