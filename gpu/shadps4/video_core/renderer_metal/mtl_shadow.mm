@@ -33,6 +33,8 @@
 #include "video_core/renderer_vulkan/vk_graphics_pipeline.h"
 #include "video_core/renderer_vulkan/vk_metal_shadow.h"
 
+extern std::atomic<unsigned> bb_list_shaders_done; // the compile step's count (mtl_shader.mm)
+
 namespace MetalShadow {
 namespace {
 
@@ -161,6 +163,7 @@ void RegisterModule(vk::ShaderModule module, std::span<const u32> spirv) {
         const auto old = candidate->Spirv();
         if (old.size() == spirv.size() && std::equal(old.begin(), old.end(), spirv.begin())) {
             s.modules[handle] = candidate;
+            ++bb_list_shaders_done; // compiled once already: the compile step waits for none
             return;
         }
     }

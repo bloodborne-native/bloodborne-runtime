@@ -35,12 +35,14 @@ planned pipelines have no shader: one of their programs was not translated (the 
 on 167 programs). Of the 207 pipelines one test session noted, the rules plan all 207.
 
 From empty caches, a first play's worst frame is 561 ms, with 10 frames over 100 ms. That is one run,
-standing still. With no step at all it was 1.9 s; with recorded states it is 258 ms. The step takes
-441 s.
+standing still. With no step at all it was 1.9 s; with recorded states it is 258 ms. From empty
+caches the step takes 76 s on an M3 Pro (one run): 14,732 shaders and 2,383,031 pipelines.
 
 ## What is left
 
-- The 167 programs the translator stops on, and the 71,073 planned pipelines left without a shader.
+- The 167 programs the translator stops on (the models' water-interaction `.dpo` programs, which
+  use shared memory outside a compute stage, as tessellation stages do), and the 71,073 planned
+  pipelines left without a shader.
 - The port's own compute kernels, tessellation stages, and the vertex and fragment forms still
   missed.
 - Movement, combat and other areas, none of which are measured.

@@ -1917,6 +1917,14 @@ void PipelineCache::CompileAheadWork() {
             const int why = TranslateForCompile(hw, sw, params, rt, code, fetch ? &*fetch : nullptr, attribs.data());
             if (why != 0) {
                 ++(why == 2 ? asserts : why == 3 ? exceptions : faults);
+                if (candidate == 0) {
+                    std::printf("Shader compile: not translated (%s): %s %s kind %u, %zu attributes\n",
+                                why == 2 ? "assertion" : why == 3 ? "exception" : "fault",
+                                shader.executable ? "exe" : shader.bundle.c_str(),
+                                shader.executable ? fmt::format("@{:x}", shader.position).c_str()
+                                                  : shader.name.c_str(),
+                                kind, shader.attribute_sizes.size());
+                }
             }
         }
     }
@@ -1964,9 +1972,20 @@ void PipelineCache::CompileAheadWork() {
         if (known && !need_modules) {
             continue;
         }
-        // Only a new shader is counted when it finishes: a compiled one needs no waiting for.
-        while (!known && submitted > bb_list_shaders_done.load() + most_waiting) {
+        // Only a new shader is counted when it finishes: a compiled one needs no waiting for. A
+        // count that stops moving for 10 s (a shader that never reports) no longer holds the step.
+        for (u32 waited = 0, last = bb_list_shaders_done.load();
+             !known && submitted > bb_list_shaders_done.load() + most_waiting;) {
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            const u32 now = bb_list_shaders_done.load();
+            waited = now == last ? waited + 1 : 0;
+            last = now;
+            if (waited == 5000) {
+                std::printf("Shader compile: %u of %u submitted shaders reported after 10 s; going on\n",
+                            now, submitted);
+                std::fflush(stdout);
+                submitted = now;
+            }
         }
         modules.push_back(MakeShader(shader.spirv, GetShaderName(shader.stage, shader.program, 0)));
         if (shader.stage == HwStage::Compute) {

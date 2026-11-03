@@ -1014,7 +1014,11 @@ CompileResult ShaderCompiler::Compile(std::span<const u32> spirv, u64 hash, std:
     const SpirvScan scan = ScanSpirv(spirv);
     result.stage = scan.stage;
     const char* stage_name = ShaderStageName(scan.stage);
+    bool counted = false; // the compile step's count: SharedLibrary counts what reaches it
     auto fail = [&](CompileStatus status, std::string message) -> CompileResult {
+        if (!counted) {
+            ++bb_list_shaders_done;
+        }
         result.status = status;
         result.error = std::move(message);
         std::atomic<u64>* counter = nullptr;
@@ -1142,6 +1146,7 @@ CompileResult ShaderCompiler::Compile(std::span<const u32> spirv, u64 hash, std:
             std::string cached_msl;
             if (ParseCache(text, parsed, cached_msl) && parsed.stage == scan.stage) {
                 objects = SharedLibrary(mtl_device, cached_msl, parsed.entry, label);
+                counted = true;
                 if (objects.error.empty()) {
                     shader->entry = std::move(parsed.entry);
                     shader->bindings = std::move(parsed.bindings);
@@ -1188,7 +1193,11 @@ CompileResult ShaderCompiler::Compile(std::span<const u32> spirv, u64 hash, std:
             return fail(CompileStatus::Failed, "SPIRV-Cross: " + FirstLine(e.what()));
         }
         CanonicalizeMsl(msl, shader->entry);
+        if (counted) {
+            --bb_list_shaders_done; // the rejected cached text was counted; this build counts
+        }
         objects = SharedLibrary(mtl_device, msl, shader->entry, label);
+        counted = true;
         if (!objects.error.empty()) {
             return fail(CompileStatus::Failed, objects.error);
         }

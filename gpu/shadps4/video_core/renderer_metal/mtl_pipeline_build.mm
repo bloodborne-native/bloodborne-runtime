@@ -22,6 +22,10 @@
 #include "video_core/renderer_metal/mtl_spirv_inputs.h"
 #include "video_core/renderer_metal/mtl_spirv_rectlist.h"
 
+#include <atomic>
+
+extern std::atomic<unsigned> bb_list_shaders_done; // the compile step's count (mtl_shader.mm)
+
 namespace Metal {
 
 namespace {
@@ -109,6 +113,8 @@ void PipelineFactory::Prefetch(std::shared_ptr<const ShaderModule> module) {
     if (stage == ShaderStage::Vertex || stage == ShaderStage::Fragment ||
         stage == ShaderStage::Compute) {
         shader_threads->Submit(std::move(module));
+    } else {
+        ++bb_list_shaders_done; // the compile step waits for every module it made to report
     }
 }
 
