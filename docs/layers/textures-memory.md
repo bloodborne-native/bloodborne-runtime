@@ -28,7 +28,7 @@ file entries, makes one image object per kind of texture on the work pool, waits
 their handles, and for a name it finds with no references but still held it builds the image again in the same
 entry. So the engine unloads textures and restores them itself. The unload starts when a `.tpf` file resource goes: `TpfResCap`'s destructor releases
 each texture it made, and an image's destructor drops a shared storage object at `+0x40`, which goes back to its
-heap with the last reference. Textures take their pixels from `GFX_GraphicsPrivateMix` unless a flag in their description or the caller says otherwise. Render targets take the same default: at least 21 of the 25 calls to `CG::RenderTarget::create` pass no heap.
+heap with the last reference. Textures take their pixels from `GFX_GraphicsPrivateMix` unless a flag in their description or the caller says otherwise. Render targets take the same default: at least 21 of the 25 calls to `CG::RenderTarget::create` pass no heap. A render target keeps one surface per mip (`getMipSurface`), reads its width, height and mip count from its description, and adds its byte size to a running total of render target memory while it lives.
 
 The game's heaps have fixed sizes, in a table of the executable with a row per build. The shipped one, `Master_ps4_GFXMIX`, adds up to 4,478 MiB, and
 `Master_ps4_flexible` adds 162 MiB:
