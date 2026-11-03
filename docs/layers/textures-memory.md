@@ -50,7 +50,7 @@ The game's heaps have fixed sizes, in a table of the executable with a row per b
  The graphics device also keeps live totals of what it holds, six sections of images `0x38` bytes apart, in
 order 2D textures, cube textures, render targets, depth targets and two more, and one for what look like shaders: a resource joins its section when it
 is created and leaves when destroyed, its size added to a running total in bytes, kept beside the count and the
-total in MiB, so the game itself knows how much it holds (an image keeps its size in bytes at `+0x58`). Textures come from file resources: character, parts and model packs, loose `.tpf` files and start-up data. A
+total in MiB, so the game itself knows how much it holds (an image keeps its size in bytes at `+0x58`). Textures come from file resources: character, parts and model packs, loose `.tpf` files and start-up data. The game accepts a `.tpf` only with the PS4 platform byte (3) and header version 0 or 4. In version 0 an entry is 20 bytes and the size, depth, array size, mip count and format come from the DDS header of its data. In version 4 an entry is 36 bytes and holds them itself (`TpfEntryReaderV0`, `TpfEntryReaderV4`). A
 map loads in tiers, each a run of steps in `MapRes`'s state machine: the model, then `LoTex`, `LoHiTex` and `HiTex`,
 each with `_Init`, `_Wait`, `_Finish` and `_Release`, and the `HiTex` step takes its holds through
 `TexRepository::findOrCreate`. Each tier's `_Init` step opens its textures through `MapTextureSet::load`, as
