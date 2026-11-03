@@ -9,6 +9,7 @@
 
 #include <array>
 #include <span>
+#include <string>
 #include <tuple>
 #include <vector>
 #include "common/types.h"
@@ -43,8 +44,10 @@ void Graphics(const Vulkan::GraphicsPipelineKey& key, std::span<const vk::Shader
               bool aux_fragment, vk::Pipeline pipeline);
 void Compute(const Vulkan::ComputePipelineKey& key, vk::ShaderModule module, vk::Pipeline pipeline);
 /// Builds a pipeline into Metal's own cache and keeps nothing (the ahead-of-time compile).
+/// `why`, when given, receives the reason a pipeline could not be built.
 bool Warm(const Vulkan::GraphicsPipelineKey& key, std::span<const vk::ShaderModule> modules,
-          std::span<const bool> has_stage, std::span<const VertexInput> inputs);
+          std::span<const bool> has_stage, std::span<const VertexInput> inputs,
+          std::string* why = nullptr);
 /// Around the game pipelines' vkCreate*Pipelines: the layer's generic translation skips them.
 struct GameBuildScope {
     GameBuildScope();
@@ -61,7 +64,7 @@ inline void Graphics(const Vulkan::GraphicsPipelineKey&, std::span<const vk::Sha
                      std::span<const bool>, std::span<const VertexInput>, bool, vk::Pipeline) {}
 inline void Compute(const Vulkan::ComputePipelineKey&, vk::ShaderModule, vk::Pipeline) {}
 inline bool Warm(const Vulkan::GraphicsPipelineKey&, std::span<const vk::ShaderModule>,
-                 std::span<const bool>, std::span<const VertexInput>) {
+                 std::span<const bool>, std::span<const VertexInput>, std::string* = nullptr) {
     return false;
 }
 #endif

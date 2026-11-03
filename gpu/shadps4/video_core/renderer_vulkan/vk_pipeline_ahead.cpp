@@ -96,6 +96,13 @@ constexpr u32 SourceOver = 0x40000504, SourceAdd = 0x40000104, SourceOverColour 
 constexpr u32 TriangleList = 0x2c4, TriangleStrip = 0x2c6, RectList = 0x251, RectListNoFill = 0x2d1, StripNoClip = 0xc6,
               ListNoClip = 0x244;
 
+/// Whether a state (as MakeState makes it) draws rect lists: its topology is the key's last word.
+bool IsRectList(const std::string& state) {
+    u32 topology = 0;
+    std::memcpy(&topology, state.data() + state.size() - 4, 4);
+    return topology == RectList || topology == RectListNoFill;
+}
+
 /// One state: `colours` empty for a pass that writes only depth.
 std::string MakeState(std::span<const u64> colours, u32 blend, u32 write_mask, u32 z, u32 topology) {
     GraphicsPipelineKey key{};
@@ -604,8 +611,14 @@ std::vector<AheadPipeline> PlanPipelines(const ShaderScan& scan, std::span<const
         if (effect(*pixel->second) && sets.size() > 1) {
             sets.resize(1); // their vertex shader takes a full-screen quad
         }
+        // Rect lists draw generated corners: a vertex shader that fetches attributes is never one
+        // (its rect form cannot be made, and play builds none).
+        const bool fetches = !vertex->second->attribute_sizes.empty();
         for (const auto& set : sets) {
             for (const auto& state : states) {
+                if (fetches && IsRectList(state)) {
+                    continue;
+                }
                 AheadPipeline pipeline{.vertex = vertex_hash, .pixel = pixel_hash};
                 auto* bytes = reinterpret_cast<char*>(&pipeline.key);
                 std::memcpy(bytes + StateStart, state.data(), state.size());
@@ -616,8 +629,8 @@ std::vector<AheadPipeline> PlanPipelines(const ShaderScan& scan, std::span<const
     }
     // Depth only, with no pixel shader: the engine's simple vertex programs.
     for (const auto& shader : scan.shaders) {
-        if (shader.kind != 1 || shader.bundle == "gxflvershader") {
-            continue;
+        if (shader.kind != 1 || shader.bundle == "gxflvershader" || !shader.attribute_sizes.empty()) {
+            continue; // rect lists only: see above
         }
         for (const u32 z : {DepthStencil, DepthOnly, DepthNoClamp}) {
             for (const u32 topology : {RectList, RectListNoFill}) {

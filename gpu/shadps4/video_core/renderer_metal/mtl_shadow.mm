@@ -222,7 +222,7 @@ void Graphics(const Vulkan::GraphicsPipelineKey& key, std::span<const vk::Shader
 }
 
 bool Warm(const Vulkan::GraphicsPipelineKey& key, std::span<const vk::ShaderModule> modules,
-          std::span<const bool> has_stage, std::span<const VertexInput> inputs) {
+          std::span<const bool> has_stage, std::span<const VertexInput> inputs, std::string* why) {
     @autoreleasepool {
         auto& s = Get();
         std::array<const Metal::ShaderModule*, Vulkan::MaxShaderStages> stages{};
@@ -230,6 +230,7 @@ bool Warm(const Vulkan::GraphicsPipelineKey& key, std::span<const vk::ShaderModu
             if (has_stage[i]) {
                 stages[i] = s.Module(modules[i]);
                 if (!stages[i]) {
+                    if (why) *why = "a stage's SPIR-V was not seen";
                     return false;
                 }
             }
@@ -239,9 +240,10 @@ bool Warm(const Vulkan::GraphicsPipelineKey& key, std::span<const vk::ShaderModu
             attributes.push_back({in.location, in.per_instance, in.divisor});
         }
         Metal::PsoCache::warming = true;
-        const bool built = s.factory.BuildGraphics(key, stages, attributes, false).render != nullptr;
+        const Metal::GraphicsPsos psos = s.factory.BuildGraphics(key, stages, attributes, false);
         Metal::PsoCache::warming = false;
-        return built;
+        if (!psos.render && why) *why = psos.error;
+        return psos.render != nullptr;
     }
 }
 

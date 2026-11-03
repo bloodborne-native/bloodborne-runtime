@@ -35,6 +35,7 @@
 #include "common/path_util.h"
 #include "video_core/renderer_metal/mtl_device_impl.h"
 #include "video_core/renderer_metal/mtl_shader.h"
+#include "video_core/renderer_metal/mtl_spirv_lanes.h"
 #include "video_core/renderer_metal/mtl_spirv_geometry.h"
 #include "video_core/renderer_metal/mtl_spirv_pervertex.h"
 
@@ -998,6 +999,17 @@ ShaderStage ReadShaderStage(std::span<const u32> spirv) {
 
 CompileResult ShaderCompiler::Compile(std::span<const u32> spirv, u64 hash, std::string_view name,
                                       const CompileVariant& variant) {
+    // Metal has no SIMD-group functions in vertex functions. There the translator only keeps a
+    // condition as a lane mask and reads it back in the same lane, which a one-lane wave gives
+    // exactly (mtl_spirv_lanes.h); other lane operations still fail.
+    if (const LaneUse lanes = ScanLaneUse(spirv); lanes.subgroup_ops && lanes.lane_masks_only &&
+                                                  ReadShaderStage(spirv) == ShaderStage::Vertex) {
+        if (const auto one_lane = RewriteOneLaneWave(spirv); one_lane.ok) {
+            return Compile(one_lane.spirv, hash, name, variant);
+        } else {
+            LOG_WARNING(Render, "Metal shader {:#018x}: lane masks not rewritable: {}", hash, one_lane.error);
+        }
+    }
     CompileResult result;
     const SpirvScan scan = ScanSpirv(spirv);
     result.stage = scan.stage;

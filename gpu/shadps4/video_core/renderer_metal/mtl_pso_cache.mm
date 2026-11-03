@@ -712,6 +712,7 @@ const RenderPipeline* PsoCache::GetRenderPipeline(const Vulkan::GraphicsPipeline
     }
 
     if (warming) {
+        warm_error = pipeline->state ? std::string{} : error;
         static const RenderPipeline built{};
         return pipeline->state ? &built : nullptr;
     }

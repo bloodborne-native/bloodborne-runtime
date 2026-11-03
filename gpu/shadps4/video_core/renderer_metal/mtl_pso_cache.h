@@ -249,6 +249,8 @@ public:
     /// cache and released, neither kept here nor added to the binary archive (one holding every
     /// pipeline stops the game for over a minute when it loads).
     static inline thread_local bool warming = false;
+    /// While warming: why the last render pipeline failed (Metal's error), for the step's summary.
+    static inline thread_local std::string warm_error;
 
     struct Counters {
         std::atomic<u64> render_pipelines{};   ///< distinct render pipelines built (incl. failed)

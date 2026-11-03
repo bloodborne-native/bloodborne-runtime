@@ -253,6 +253,9 @@ GraphicsPsos PipelineFactory::BuildGraphics(const Vulkan::GraphicsPipelineKey& k
                 result.rect_list = rect_list;
                 if (!result.render) {
                     result.error = "the Metal pipeline state failed";
+                    if (PsoCache::warming && !PsoCache::warm_error.empty()) {
+                        result.error += ": " + PsoCache::warm_error;
+                    }
                 }
             }
         }

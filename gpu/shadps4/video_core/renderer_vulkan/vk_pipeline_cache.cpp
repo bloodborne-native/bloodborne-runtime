@@ -8,9 +8,11 @@
 #include <cstring>
 #include <deque>
 #include <functional>
+#include <map>
 #include <mutex>
 #include <pthread.h>
 #include <ranges>
+#include <regex>
 #include <string>
 #include <thread>
 #include <unordered_set>
@@ -1364,7 +1366,48 @@ static struct {
 } list_shape;
 static const Shader::Info::ListBinding* list_buffers{};
 static const Shader::Info::ListBinding* list_images{};
-static std::unordered_map<u64, u64> program_spirv; ///< a program's first SPIR-V
+/// A program's SPIR-V for each number class of its vertex attributes (0 float, 1 signed, 2
+/// unsigned) it was translated with; pixel programs have one, with no attributes.
+static std::unordered_map<u64, std::vector<std::pair<std::vector<u8>, u64>>> program_spirv;
+static std::vector<u8> translating_classes; ///< the classes the next translation is made with
+
+/// The number classes of a pipeline's vertex attributes, as program_spirv keys them.
+static std::vector<u8> AttributeClasses(const GraphicsPipelineKey& key) {
+    std::vector<u8> classes;
+    for (const auto format : key.vertex_buffer_formats) {
+        if (u32(format) == 0) {
+            break;
+        }
+        const std::string_view name = VideoCore::Backend::FormatName(format);
+        classes.push_back(name.find("Uint") != name.npos ? 2 : name.find("Sint") != name.npos ? 1 : 0);
+    }
+    return classes;
+}
+
+/// The SPIR-V of `program` for a pipeline whose attributes have `classes`, or 0: the translation
+/// made for exactly those classes, else one Metal accepts with them (an attribute the shader reads
+/// as an integer needs an integer format of the same sign; one read as float takes any format).
+static u64 SpirvFor(u64 program, const std::vector<u8>& classes) {
+    const auto it = program_spirv.find(program);
+    if (it == program_spirv.end()) {
+        return 0;
+    }
+    for (const auto& [made_for, spirv] : it->second) {
+        if (made_for == classes) {
+            return spirv;
+        }
+    }
+    for (const auto& [made_for, spirv] : it->second) {
+        bool accepted = made_for.size() == classes.size();
+        for (size_t i = 0; accepted && i < classes.size(); ++i) {
+            accepted = made_for[i] == 0 || made_for[i] == classes[i];
+        }
+        if (accepted) {
+            return spirv;
+        }
+    }
+    return 0;
+}
 static std::array<u32, 4> list_format{};
 static u32 list_image = 0;
 
@@ -1393,8 +1436,10 @@ static void BuildPlanned(std::span<const AheadPipeline> planned, u32 states,
     bb_list_pipelines_total.store(u32(planned.size()));
     const auto start = std::chrono::steady_clock::now();
     std::atomic<size_t> next{0};
-    std::atomic<u32> made{0}, failed{0}, skipped{0}, no_shader{0};
+    std::atomic<u32> made{0}, failed{0}, skipped{0}, no_shader{0}, no_form{0};
     std::mutex record_mutex;
+    std::mutex reasons_mutex;
+    std::map<std::string, u32> reasons;
     const auto work = [&] {
         for (size_t i = next++; i < planned.size(); i = next++) {
             const auto& pipeline = planned[i];
@@ -1405,16 +1450,22 @@ static void BuildPlanned(std::span<const AheadPipeline> planned, u32 states,
                 ++skipped;
                 continue;
             }
-            const auto vertex = program_spirv.find(pipeline.vertex);
-            const auto pixel = program_spirv.find(pipeline.pixel);
-            if (vertex == program_spirv.end() || (pipeline.pixel && pixel == program_spirv.end())) {
+            // The vertex shader translated for the number classes of this pipeline's attributes: a
+            // float attribute and an integer one are different shaders (Metal checks they match).
+            const u64 vertex_spirv = SpirvFor(pipeline.vertex, AttributeClasses(pipeline.key));
+            const u64 pixel_spirv = pipeline.pixel ? SpirvFor(pipeline.pixel, {}) : 0;
+            if (vertex_spirv == 0 && program_spirv.contains(pipeline.vertex)) {
+                ++no_form; // translated, but none Metal accepts with these attribute types
+                continue;
+            }
+            if (vertex_spirv == 0 || (pipeline.pixel && pixel_spirv == 0)) {
                 ++no_shader;
                 continue;
             }
             constexpr u32 vertex_stage = u32(SwStage::Vertex), pixel_stage = u32(SwStage::Fragment);
             std::array<vk::ShaderModule, MaxShaderStages> stages{};
             std::array<bool, MaxShaderStages> has{};
-            const auto vertex_module = modules.find(vertex->second);
+            const auto vertex_module = modules.find(vertex_spirv);
             if (vertex_module == modules.end()) {
                 ++no_shader;
                 continue;
@@ -1422,7 +1473,7 @@ static void BuildPlanned(std::span<const AheadPipeline> planned, u32 states,
             stages[vertex_stage] = vertex_module->second;
             has[vertex_stage] = true;
             if (pipeline.pixel) {
-                const auto pixel_module = modules.find(pixel->second);
+                const auto pixel_module = modules.find(pixel_spirv);
                 if (pixel_module == modules.end()) {
                     ++no_shader;
                     continue;
@@ -1439,7 +1490,17 @@ static void BuildPlanned(std::span<const AheadPipeline> planned, u32 states,
             auto key = pipeline.key;
             key.stage_hashes[vertex_stage] = pipeline.vertex;
             key.stage_hashes[pixel_stage] = pipeline.pixel;
-            (MetalShadow::Warm(key, stages, has, inputs) ? made : failed)++;
+            std::string why;
+            if (MetalShadow::Warm(key, stages, has, inputs, &why)) {
+                ++made;
+            } else {
+                ++failed;
+                // Counted by reason, with numbers and names of shaders taken out, so the summary
+                // shows which kinds of planned pipelines cannot be built.
+                why = std::regex_replace(why.substr(0, 240), std::regex("0x[0-9a-fA-F]+|[0-9]+"), "#");
+                std::scoped_lock lock{reasons_mutex};
+                ++reasons[why];
+            }
             std::scoped_lock lock{record_mutex};
             record << fmt::format("{:x}\n", id);
         }
@@ -1453,9 +1514,18 @@ static void BuildPlanned(std::span<const AheadPipeline> planned, u32 states,
     }
     record.close();
     std::ofstream(cache / "pipelines-ahead.complete") << states;
-    std::printf("Pipeline compile: %u built, %u skipped, %u failed, %u without a shader, %.1f s\n",
-                made.load(), skipped.load(), failed.load(), no_shader.load(),
+    std::printf("Pipeline compile: %u built, %u skipped, %u failed, %u without a shader, %u without a "
+                "vertex shader for their attribute types, %.1f s\n",
+                made.load(), skipped.load(), failed.load(), no_shader.load(), no_form.load(),
                 std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
+    std::vector<std::pair<u32, std::string>> by_count;
+    for (const auto& [why, count] : reasons) {
+        by_count.emplace_back(count, why);
+    }
+    std::sort(by_count.begin(), by_count.end(), std::greater<>{});
+    for (u32 i = 0; i < by_count.size() && i < 12; ++i) {
+        std::printf("Pipeline compile: %u failed: %s\n", by_count[i].first, by_count[i].second.c_str());
+    }
     std::fflush(stdout);
 }
 
@@ -1587,7 +1657,10 @@ __attribute__((noinline)) int PipelineCache::TranslateForCompile(HwStage hw, SwS
         }
         const auto spv = Shader::Backend::SPIRV::EmitSPIRV(profile, rt, ir, next);
         const u64 spirv_hash = XXH3_64bits(spv.data(), spv.size() * 4);
-        program_spirv.try_emplace(params.hash, spirv_hash);
+        auto& made = program_spirv[params.hash];
+        if (std::none_of(made.begin(), made.end(), [](const auto& entry) { return entry.first == translating_classes; })) {
+            made.emplace_back(translating_classes, spirv_hash);
+        }
         if (list_spirv.insert(spirv_hash).second) {
             ahead_queue.push_back({spirv_hash, params.hash, hw, spv});
         }
@@ -1838,6 +1911,9 @@ void PipelineCache::CompileAheadWork() {
                 .hash = hash,
             };
             watch_ticket.fetch_add(1);
+            translating_classes = fragment || shader.attribute_classes.empty()
+                                      ? std::vector<u8>{}
+                                      : shader.attribute_classes[candidate];
             const int why = TranslateForCompile(hw, sw, params, rt, code, fetch ? &*fetch : nullptr, attribs.data());
             if (why != 0) {
                 ++(why == 2 ? asserts : why == 3 ? exceptions : faults);
