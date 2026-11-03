@@ -1,5 +1,5 @@
 // bbport: see vk_shader_scan.h. The layouts are the PS4 toolchain's: a "Shdr" header, then the code;
-// an "OrbShdr" footer with the length and hash; in bundled shaders also a record per input.
+// an "OrbShdr" footer with the length and hash, then a record per input and resource.
 #include "video_core/renderer_vulkan/vk_shader_scan.h"
 
 #include <algorithm>
@@ -79,6 +79,9 @@ bool IsSemantic(std::string_view text) {
     return std::all_of(text.begin() + i, text.end(), [](char c) { return c >= '0' && c <= '9'; });
 }
 
+/// The root of Scaleform's vertex input names.
+constexpr std::string_view ScaleformInputs = "shaderInput";
+
 bool IsInputName(std::string_view text) {
     if (text.size() < 3 || !std::all_of(text.begin(), text.end(), [](char c) {
             return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
@@ -87,16 +90,20 @@ bool IsInputName(std::string_view text) {
         return false;
     }
     const auto root = text.substr(0, text.find('.'));
-    static constexpr std::array<std::string_view, 8> roots{
-        "vtxInput", "vsIn", "In", "IN", "input", "VertexMain", "vPosition", "vTexCoords"};
+    static constexpr std::array<std::string_view, 9> roots{
+        "vtxInput", "vsIn", "In", "IN", "input", "VertexMain", "vPosition", "vTexCoords",
+        ScaleformInputs};
     return std::find(roots.begin(), roots.end(), root) != roots.end();
 }
 
-/// The semantic of each vertex input, from the records after the footer.
-std::vector<std::string_view> InputSemantics(std::string_view data, size_t footer) {
-    std::vector<std::string_view> out;
-    const size_t size = data.size();
-    for (size_t at = footer + 28; at < ((size - 16) & ~size_t{3}); at += 4) {
+/// The semantic of each vertex input, in attribute order, from the records after the footer:
+/// {type, usage, slot, index, 0, name, semantic}, the offsets relative to their own fields. Scaleform's programs (in the executable) give
+/// three inputs the same semantic, so theirs is the input's name (`pos`, `acolor`, `afactor`,
+/// `atc`, `vbatch`). `limit` bounds the search in a file that holds more than the program.
+std::vector<std::string_view> InputSemantics(std::string_view data, size_t footer, size_t limit) {
+    std::vector<std::pair<u32, std::string_view>> found;
+    const size_t size = std::min(data.size(), footer + limit);
+    for (size_t at = footer + 28; at + 16 <= size; at += 4) {
         const u32 zero = Read<u32>(data, at);
         const u32 name = Read<u32>(data, at + 4);
         const u32 semantic = Read<u32>(data, at + 8);
@@ -105,9 +112,28 @@ std::vector<std::string_view> InputSemantics(std::string_view data, size_t foote
             const auto name_text = CString(data, at + 4 + name);
             const auto semantic_text = CString(data, at + 8 + semantic);
             if (IsInputName(name_text) && IsSemantic(semantic_text)) {
-                out.push_back(semantic_text);
+                const bool scaleform = name_text.starts_with(ScaleformInputs);
+                found.emplace_back(u8(data[at - 1]),
+                                   scaleform ? name_text.substr(ScaleformInputs.size() + 1) : semantic_text);
             }
         }
+    }
+    // In index order when the indices are exactly 0..n-1; else as listed.
+    std::vector<bool> taken(found.size());
+    bool indexed = true;
+    for (const auto& [index, semantic] : found) {
+        indexed = indexed && index < found.size() && !taken[index];
+        if (indexed) {
+            taken[index] = true;
+        }
+    }
+    if (indexed) {
+        std::stable_sort(found.begin(), found.end(),
+                         [](const auto& a, const auto& b) { return a.first < b.first; });
+    }
+    std::vector<std::string_view> out;
+    for (const auto& [index, semantic] : found) {
+        out.push_back(semantic);
     }
     return out;
 }
@@ -116,6 +142,9 @@ u8 SemanticClass(std::string_view semantic) {
     if (semantic == "BLENDINDICES" || semantic == "NORMAL" || semantic == "TANGENT" ||
         semantic == "BINORMAL") {
         return 2;
+    }
+    if (semantic == "vbatch") {
+        return 1; // Scaleform's batch index
     }
     return semantic == "TEXCOORD" ? 1 : 0;
 }
@@ -216,8 +245,11 @@ private:
             shader.attribute_sizes.push_back((w[found_at + i] >> 16) & 0xff);
         }
         std::vector<u8> plain(count), named(count), texcoord_float(count);
-        if (!shader.executable) {
-            const auto semantics = InputSemantics(data, footer);
+        {
+            // A program's records follow its footer; in the executable the next program follows.
+            const size_t next = shader.executable ? data.find("OrbShdr", footer + 8) : data.npos;
+            const auto semantics =
+                InputSemantics(data, footer, next == data.npos ? data.size() : next - footer);
             if (semantics.size() == count) {
                 for (u32 i = 0; i < count; ++i) {
                     shader.semantics.emplace_back(semantics[i]);

@@ -126,6 +126,17 @@ std::string MakeState(std::span<const u64> colours, u32 blend, u32 write_mask, u
     return StateOf(key);
 }
 
+/// A state with no colour target at all: a pixel shader that writes only depth.
+std::string NoTargetState(u32 z, u32 topology) {
+    GraphicsPipelineKey key{};
+    auto* bytes = reinterpret_cast<char*>(&key);
+    std::memset(bytes + offsetof(GraphicsPipelineKey, logic_op), 0xcc, 1);
+    key.num_samples = key.depth_samples = 1;
+    std::memcpy(bytes + sizeof(key) - 8, &z, 4);
+    std::memcpy(bytes + sizeof(key) - 4, &topology, 4);
+    return StateOf(key);
+}
+
 /// One state with each target's own blend and write mask (`blends` and `masks` as long as `colours`).
 std::string MakeStatePerTarget(std::span<const u64> colours, std::span<const u32> blends,
                                std::span<const u32> masks, u32 z, u32 topology) {
@@ -206,6 +217,9 @@ void FixedStates(const ScannedShader& pixel, std::set<std::string>& out) {
     for (const u32 topology : {TriangleStrip, RectList, StripNoClip, ListNoClip}) {
         for (const u32 z : {NoDepth, DepthStencil}) {
             out.insert(MakeState({}, NoBlend, 0, z, topology));
+            if (targets == 0) {
+                out.insert(NoTargetState(z, topology));
+            }
             if (targets <= 1) {
                 for (const u64 colour : one) {
                     const std::array colours{colour};
@@ -258,7 +272,10 @@ void EngineStates(std::set<std::string>& out) {
         const std::array colours{colour};
         for (const u32 z : {NoDepth, DepthStencil}) {
             for (const u32 mask : {0xfu, 0x8u}) {
-                out.insert(MakeState(colours, NoBlend, mask, z, StripNoClip));
+                // Rect lists only reach programs without attributes (PlanPipelines).
+                for (const u32 topology : {StripNoClip, RectList}) {
+                    out.insert(MakeState(colours, NoBlend, mask, z, topology));
+                }
             }
         }
     }
@@ -267,13 +284,16 @@ void EngineStates(std::set<std::string>& out) {
     }
 }
 
+/// YEBIS passes: full-screen, one target, drawn with depth testing off or on.
 void EffectStates(std::set<std::string>& out) {
-    for (const u64 colour : {Rgba16f, R11G11B10, Bgra8, Rgba8, Rg16f}) {
-        const std::array colours{colour};
-        out.insert(MakeState(colours, NoBlend, 0xf, NoDepth, StripNoClip));
+    for (const u32 z : {NoDepth, DepthStencil}) {
+        for (const u64 colour : {Rgba16f, R11G11B10, Bgra8, Rgba8, Rg16f}) {
+            const std::array colours{colour};
+            out.insert(MakeState(colours, NoBlend, 0xf, z, StripNoClip));
+        }
+        const std::array hdr{Rgba16f};
+        out.insert(MakeState(hdr, NoBlend, 0x8, z, StripNoClip));
     }
-    const std::array hdr{Rgba16f};
-    out.insert(MakeState(hdr, NoBlend, 0x8, NoDepth, StripNoClip));
 }
 
 /// The particle and effect bundle: blended over the scene, or one of two targets.
@@ -334,8 +354,9 @@ void ModelPairs(const ShaderScan& scan, std::set<std::pair<u64, u64>>& pairs) {
 }
 
 /// The other pairs: within a bundle, or among the executable's, a vertex shader that exports what
-/// the pixel shader reads. Bundles of full-screen and interface passes also pair on a subset.
-void ExportPairs(const ShaderScan& scan, std::set<std::pair<u64, u64>>& pairs) {
+/// the pixel shader reads. Bundles of full-screen and interface passes, and the YEBIS effects
+/// (the executable's programs before `engine_programs`), also pair on a subset.
+void ExportPairs(const ShaderScan& scan, size_t engine_programs, std::set<std::pair<u64, u64>>& pairs) {
     using Set = std::set<u8>;
     std::map<std::pair<std::string, Set>, std::vector<u64>> exact;
     std::map<std::string, std::vector<const ScannedShader*>> vertex_by_group;
@@ -352,13 +373,42 @@ void ExportPairs(const ShaderScan& scan, std::set<std::pair<u64, u64>>& pairs) {
         }
         const auto group = Group(shader);
         const Set inputs(shader.pixel_inputs.begin(), shader.pixel_inputs.end());
-        if (const auto it = exact.find({group, inputs}); it != exact.end()) {
+        const auto it = exact.find({group, inputs});
+        if (it != exact.end()) {
             for (const u64 vertex : it->second) {
                 pairs.insert({vertex, shader.hash});
             }
         }
-        if (group == "gxrenderershader" || group == "gxposteffect" || group == "gxshader" ||
-            group == "gxgui" || group == "gxffxshader") {
+        const auto effect = [engine_programs](const ScannedShader& program) {
+            return program.executable && program.position < engine_programs;
+        };
+        if (effect(shader)) {
+            // A YEBIS pixel program without an exact match: the vertex programs exporting the
+            // fewest outputs beyond what it reads.
+            if (it != exact.end()) {
+                continue;
+            }
+            size_t fewest = ~size_t{0};
+            std::vector<u64> nearest;
+            for (const auto* vertex : vertex_by_group[group]) {
+                const Set exports(vertex->exports.begin(), vertex->exports.end());
+                if (!effect(*vertex) ||
+                    !std::includes(exports.begin(), exports.end(), inputs.begin(), inputs.end())) {
+                    continue;
+                }
+                if (exports.size() < fewest) {
+                    fewest = exports.size();
+                    nearest.clear();
+                }
+                if (exports.size() == fewest) {
+                    nearest.push_back(vertex->hash);
+                }
+            }
+            for (const u64 vertex : nearest) {
+                pairs.insert({vertex, shader.hash});
+            }
+        } else if (group == "gxrenderershader" || group == "gxposteffect" || group == "gxshader" ||
+                   group == "gxgui" || group == "gxffxshader") {
             for (const auto* vertex : vertex_by_group[group]) {
                 const Set exports(vertex->exports.begin(), vertex->exports.end());
                 if (std::includes(exports.begin(), exports.end(), inputs.begin(), inputs.end())) {
@@ -411,6 +461,17 @@ struct FormatTable {
         rule("TEXCOORD", 2, {Float2, Half2, Half4});
         rule("TEXCOORD", 3, {Bytes4});
         rule("TEXCOORD", 4, {Half4, Float4});
+        // Scaleform's inputs, by name: its mesh formats hold positions as two floats or two
+        // 16-bit integers, colours and factors as four bytes, texture coordinates as two floats;
+        // the batch index one signed byte, or four bytes beside a colour.
+        constexpr u32 Short2 = 82, Byte1 = 14;
+        for (const u32 size : {1u, 2u, 3u, 4u}) {
+            rule("pos", size, {Float2, Short2});
+            rule("acolor", size, {Bytes4});
+            rule("afactor", size, {Bytes4});
+            rule("atc", size, {Float2});
+            rule("vbatch", size, {Byte1, Bytes4});
+        }
     }
 
     static void Add(Counts& counts, u32 format) {
@@ -455,7 +516,8 @@ struct FormatTable {
                 add(named);
                 // Meshes differ most in their texture coordinates and position.
                 for (size_t i = 0; i < count; ++i) {
-                    if (vertex.semantics[i] != "TEXCOORD" && vertex.semantics[i] != "POSITION") {
+                    if (vertex.semantics[i] != "TEXCOORD" && vertex.semantics[i] != "POSITION" &&
+                        vertex.semantics[i] != "pos" && vertex.semantics[i] != "vbatch") {
                         continue;
                     }
                     const auto& counts = by_semantic.at({vertex.semantics[i], vertex.attribute_sizes[i]});
@@ -514,6 +576,40 @@ struct FormatTable {
         return out;
     }
 };
+
+/// The engine's fixed vertex layouts, by vertex program (file name without ".vpo"): the input
+/// element arrays its renderers create those programs with (GXSimple, GUI, screen quads), as
+/// Vulkan formats in attribute order.
+const std::map<std::string, Formats, std::less<>>& EngineLayouts() {
+    constexpr u32 Bytes4 = 37, Float2 = 103, Float3 = 106, Float4 = 109;
+    static const std::map<std::string, Formats, std::less<>> layouts{
+        {"gxsimple_v", {Float4, Float4}},
+        {"gxsimple_transform_v", {Float4, Float4}},
+        {"gxsimple_single2dtexture_v", {Float4, Float4, Float2}},
+        {"gxsimple_transformsingle2dtexture_v", {Float4, Float4, Float2}},
+        {"gxsimple_skybox_v", {Float4}},
+        {"gxsimple_debugfont_v", {Float2, Float3, Bytes4}},
+        {"gxguishader_tex1", {Float3, Bytes4, Float3}},
+        {"gxguishader_tex2", {Float3, Bytes4, Float2, Float2}},
+        {"gxguishader_color2", {Float3, Bytes4, Bytes4, Float2}},
+        {"screenspacequadshader", {Float4, Float2}},
+        {"screenspacequadshaderz", {Float4, Float2}},
+    };
+    return layouts;
+}
+
+/// A vertex program's fixed layout, when the engine creates it with one and it reads all of it.
+const Formats* EngineLayout(const ScannedShader& vertex) {
+    std::string_view name{vertex.name};
+    if (vertex.bundle == "gxflvershader" || !name.ends_with(".vpo")) {
+        return nullptr;
+    }
+    name.remove_suffix(4);
+    const auto& layouts = EngineLayouts();
+    const auto it = layouts.find(name);
+    return it != layouts.end() && it->second.size() == vertex.attribute_sizes.size() ? &it->second
+                                                                                    : nullptr;
+}
 
 struct Header {
     u32 version;
@@ -620,7 +716,7 @@ std::vector<AheadPipeline> PlanPipelines(const ShaderScan& scan, std::span<const
     std::unordered_map<u64, std::set<std::string>> fixed_states;
     std::set<std::pair<u64, u64>> pairs;
     ModelPairs(scan, pairs);
-    ExportPairs(scan, pairs);
+    ExportPairs(scan, engine_programs, pairs);
     for (const auto& [vertex_hash, pixel_hash] : pairs) {
         const auto vertex = shaders.find(vertex_hash);
         const auto pixel = shaders.find(pixel_hash);
@@ -650,7 +746,8 @@ std::vector<AheadPipeline> PlanPipelines(const ShaderScan& scan, std::span<const
                 states.insert(std::move(state));
             }
         }
-        auto sets = formats.For(*vertex->second);
+        const auto* layout = EngineLayout(*vertex->second);
+        auto sets = layout ? std::vector<Formats>{*layout} : formats.For(*vertex->second);
         if (effect(*pixel->second) && sets.size() > 1) {
             sets.resize(1); // their vertex shader takes a full-screen quad
         }
@@ -683,7 +780,8 @@ std::vector<AheadPipeline> PlanPipelines(const ShaderScan& scan, std::span<const
                 std::memset(bytes + offsetof(GraphicsPipelineKey, logic_op), 0xcc, 1);
                 std::memcpy(bytes + sizeof(pipeline.key) - 8, &z, 4);
                 std::memcpy(bytes + sizeof(pipeline.key) - 4, &topology, 4);
-                for (const auto& set : formats.For(shader)) {
+                const auto* layout = EngineLayout(shader);
+                for (const auto& set : layout ? std::vector<Formats>{*layout} : formats.For(shader)) {
                     std::memcpy(bytes + FormatsStart, set.data(), set.size() * sizeof(u32));
                     out.push_back(pipeline);
                 }
@@ -741,7 +839,12 @@ void CheckPlan(const ShaderScan& scan, std::span<const AheadPipeline> seen) {
         const auto& key = pipeline.key;
         const auto name = [&](u64 hash) {
             const auto it = by_hash.find(hash);
-            return it == by_hash.end() ? std::string{"?"} : it->second->bundle + "/" + it->second->name;
+            if (it == by_hash.end()) {
+                return fmt::format("? {:x}", hash);
+            }
+            const auto& shader = *it->second;
+            return shader.executable ? fmt::format("exe@{:x} {:x}", shader.position, hash)
+                                     : shader.bundle + "/" + shader.name;
         };
         std::string targets;
         for (u32 i = 0; i < key.num_color_attachments && i < AmdGpu::NUM_COLOR_BUFFERS; ++i) {
@@ -759,8 +862,81 @@ void CheckPlan(const ShaderScan& scan, std::span<const AheadPipeline> seen) {
                           : planned_states.contains({pipeline.vertex, pipeline.pixel, StateOf(key)})
                               ? "state planned, vertex formats differ"
                               : "pair planned, state not";
-        std::printf("Plan check: missed %s + %s: %s; z %x topology %x%s\n", name(pipeline.vertex).c_str(),
-                    name(pipeline.pixel).c_str(), why, z, topology, targets.c_str());
+        std::string formats;
+        for (const auto format : key.vertex_buffer_formats) {
+            if (u32(format) == 0) {
+                break;
+            }
+            formats += fmt::format(" {}", u32(format));
+        }
+        std::printf("Plan check: missed %s + %s: %s; z %x topology %x%s; vertex formats%s\n",
+                    name(pipeline.vertex).c_str(), name(pipeline.pixel).c_str(), why, z, topology,
+                    targets.c_str(), formats.c_str());
+        if (!planned_pairs.contains({pipeline.vertex, pipeline.pixel})) {
+            const auto list = [](std::span<const u8> values) {
+                std::string text;
+                for (const u8 value : values) {
+                    text += fmt::format(" {}", value);
+                }
+                return text;
+            };
+            const auto vertex = by_hash.find(pipeline.vertex);
+            const auto pixel = by_hash.find(pipeline.pixel);
+            if (vertex != by_hash.end() && pixel != by_hash.end()) {
+                std::printf("Plan check:   vertex exports%s; pixel inputs%s\n",
+                            list(vertex->second->exports).c_str(), list(pixel->second->pixel_inputs).c_str());
+            }
+        }
+        // The planned state of the pair nearest to it, by the key bytes that differ.
+        const auto state = StateOf(key);
+        std::string nearest;
+        size_t fewest = state.size() + 1;
+        for (const auto& [vertex, pixel, planned_state] : planned_states) {
+            if (vertex != pipeline.vertex || pixel != pipeline.pixel) {
+                continue;
+            }
+            std::string differ;
+            size_t count = 0;
+            for (size_t i = 0; i < state.size(); ++i) {
+                if (state[i] != planned_state[i]) {
+                    ++count;
+                    differ += fmt::format(" +{:x}: {:02x} planned {:02x}", StateStart + i, u8(state[i]),
+                                          u8(planned_state[i]));
+                }
+            }
+            if (count < fewest) {
+                fewest = count;
+                nearest = differ;
+            }
+        }
+        if (!nearest.empty()) {
+            std::printf("Plan check:   nearest planned state differs at%s\n", nearest.c_str());
+        }
+    }
+    // Every engine vertex program: what the plan knows of its attributes and gives it.
+    const FormatTable table;
+    for (const auto& shader : scan.shaders) {
+        if (shader.kind != 1 || shader.bundle == "gxflvershader") {
+            continue;
+        }
+        std::string sizes, sets;
+        for (size_t i = 0; i < shader.attribute_sizes.size(); ++i) {
+            sizes += fmt::format(" {}{}", shader.attribute_sizes[i],
+                                 i < shader.semantics.size() ? ":" + shader.semantics[i] : "");
+        }
+        const auto* layout = EngineLayout(shader);
+        for (const auto& set : layout ? std::vector<Formats>{*layout} : table.For(shader)) {
+            sets += " [";
+            for (const u32 format : set) {
+                sets += fmt::format(" {}", format);
+            }
+            sets += " ]";
+        }
+        const auto line = fmt::format(
+            "Plan check: vertex {} {:x}; attributes{}; {}{}\n",
+            shader.executable ? fmt::format("exe@{:x}", shader.position) : shader.bundle + "/" + shader.name,
+            shader.hash, sizes, layout ? "engine layout" : "planned", sets);
+        std::fputs(line.c_str(), stdout);
     }
     std::fflush(stdout);
 }
