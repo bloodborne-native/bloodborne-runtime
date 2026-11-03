@@ -150,6 +150,9 @@ static void print_key_binding(const char *name, SDL_Scancode key) {
 
 static int read_input(const char *kind) {
     const int want_key = strcmp(kind, "pad") != 0, want_pad = strcmp(kind, "key") != 0;
+    /* macOS 14 and later do not let a process started in the background take focus, so this
+     * window may stay behind the launcher: gamepad buttons must count without focus (issue #12). */
+    SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         fprintf(stderr, "read-input: %s\n", SDL_GetError());
         return 1;
