@@ -198,6 +198,10 @@ Rasterizer::Rasterizer(VideoCore::Backend::Device& device, const Instance& insta
     // Object motion first: it fixes the buffer addresses the motion shader variants embed.
     object_motion = std::make_unique<ObjectMotion>(device);
     camera_motion = std::make_unique<CameraMotion>(device, texture_cache, runtime_);
+    // bbport: the indirect guard's kernel made at start, not at the first indirect dispatch.
+    if (IndirectGuard::Enabled()) {
+        indirect_guard = std::make_unique<IndirectGuard>(device);
+    }
     camera_motion->SetObjectMotion(object_motion.get());
     upscaler = std::make_unique<TemporalUpscaler>(instance, scheduler, texture_cache, runtime_,
                                                   *camera_motion, *scene_targets);

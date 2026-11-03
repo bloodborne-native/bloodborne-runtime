@@ -107,6 +107,18 @@ bool IsRectList(const std::string& state) {
 
 constexpr u32 Patches = 0x09; ///< the topology word's primitive byte for a tessellated draw
 
+/// Whether a state has a depth target: the depth word's low bits are its format.
+bool HasDepth(const std::string& state) {
+    u32 z = 0;
+    std::memcpy(&z, state.data() + state.size() - 8, 4);
+    return (z & 3) != 0;
+}
+
+/// Whether a pixel program writes depth (DB_SHADER_CONTROL's Z_EXPORT_ENABLE, in its header).
+bool WritesDepth(const ScannedShader& pixel) {
+    return pixel.kind == 2 && (pixel.depth_control & 1) != 0;
+}
+
 /// The topology word's low five bits are the primitive (polygon mode and clip space follow).
 bool IsPatches(const std::string& state) {
     return (u8(state[state.size() - 4]) & 0x1f) == Patches;
@@ -925,8 +937,9 @@ std::vector<AheadPipeline> PlanPipelines(const ShaderScan& scan, std::span<const
         const bool fetches = !vertex->second->attribute_sizes.empty();
         for (const auto& set : sets) {
             for (const auto& state : states) {
-                if ((fetches && IsRectList(state)) || IsPatches(state)) {
-                    continue;
+                if ((fetches && IsRectList(state)) || IsPatches(state) ||
+                    (WritesDepth(*pixel->second) && !HasDepth(state))) {
+                    continue; // a pixel shader that writes depth draws only with a depth target
                 }
                 AheadPipeline pipeline{.vertex = vertex_hash, .pixel = pixel_hash};
                 auto* bytes = reinterpret_cast<char*>(&pipeline.key);
@@ -988,6 +1001,9 @@ std::vector<AheadPipeline> PlanPipelines(const ShaderScan& scan, std::span<const
             }
             for (const auto& formats_set : sets) {
                 for (const auto& state : states) {
+                    if (WritesDepth(*pixel) && !HasDepth(state)) {
+                        continue;
+                    }
                     AheadPipeline pipeline{.vertex = set.local, .pixel = pixel->hash};
                     auto* bytes = reinterpret_cast<char*>(&pipeline.key);
                     std::memcpy(bytes + StateStart, state.data(), state.size());

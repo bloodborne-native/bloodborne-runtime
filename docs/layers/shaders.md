@@ -19,6 +19,11 @@ them once, ahead of time, rather than replace them by hand.
 - **Shaders independent of the draw** where the source never read what differed.
 - **Compute strides read at run time,** so a structure's size is no longer a shader form, and mixes
   of formats across a program's bindings.
+- **What the pixel header says:** besides colour, whether a pixel program writes depth, stencil or
+  the sample mask (the header holds DB_SHADER_CONTROL), so those shaders match play's, and they
+  are planned only with a depth target.
+- **The renderer's own kernels at start:** the tiling kernels of the tile modes the game uses and
+  the indirect-dispatch guard are made when the renderer starts, not at their first use.
 - **Tessellated draws:** the local, hull and domain programs pair by file name; what the game sets
   for the draw (the strides, the control points, the tessellation type) comes from their headers,
   and the effects' tessellated pipelines take their vertex layouts from the effects renderer's own
@@ -32,18 +37,19 @@ them once, ahead of time, rather than replace them by hand.
 
 ## Where it stands
 
-After the step, 285 of the 314 shaders one session in Iosefka's Clinic made were already made
-(91%): 142 of 152 fragment, 102 of 107 vertex, 34 of 48 compute and all
-7 tessellation stages. (The session's other 10 tessellation modules are the renderer's own, for
-rect and quad lists.)
+After the step, 292 of the 300 shaders one session in Iosefka's Clinic made from the game's
+programs were already made (97%): 146 of 149 fragment, 105 of 109 vertex, 34 of 35 compute and all
+7 tessellation stages. The renderer's own 30 shaders (tiling, copies, upscaling, the overlays) are
+made at start, before play. The 8 left read textures of another kind than the step assumes (a 1D
+array, a 3D table) or attributes in other formats.
 
-The step builds 2,409,298 pipelines and none fails (before: 656,734 of 3.3 million failed); every
+The step builds 2,407,516 pipelines and none fails (before: 656,734 of 3.3 million failed); every
 planned pipeline has its shaders, and the translator stops on none of the game's programs. Of the
 243 pipelines test sessions noted, tessellated draws included, the rules plan all 243.
 
 From empty caches, a first play's worst frame is 561 ms, with 10 frames over 100 ms. That is one run,
 standing still. With no step at all it was 1.9 s; with recorded states it is 258 ms. From empty
-caches the step takes 103 s on an M3 Pro (one run): 15,242 shaders and 2,409,298 pipelines.
+caches the step takes 103 s on an M3 Pro (one run): 15,242 shaders and 2.4 million pipelines.
 
 ## What is left
 

@@ -1360,6 +1360,19 @@ static void LogVariant(u64 pgm_hash, Shader::HwStage stage, size_t perm_idx, dou
 static std::unordered_set<u64> list_spirv; ///< every SPIR-V the step made
 
 
+/// BB_SPIRV_LOG=1: each translation's program and SPIR-V hash (as the Metal backend and the
+/// compile step hash modules), in play and in the step, to match what play makes to the step's.
+void LogSpirvProgram(const char* where, u64 program, std::span<const u32> spirv) {
+    static const bool wanted = [] {
+        const char* env = std::getenv("BB_SPIRV_LOG");
+        return env && env[0] == '1';
+    }();
+    if (wanted) {
+        std::printf("SPIR-V program: %s %llx %llx\n", where, static_cast<unsigned long long>(program),
+                    static_cast<unsigned long long>(XXH3_64bits(spirv.data(), spirv.size_bytes())));
+    }
+}
+
 /// A shader the step has translated and not yet compiled.
 struct AheadShader {
     u64 spirv_hash;
@@ -1698,6 +1711,7 @@ __attribute__((noinline)) int PipelineCache::TranslateForCompile(HwStage hw, SwS
         const auto spv = Shader::Backend::SPIRV::EmitSPIRV(profile, rt, ir, next);
         const u64 spirv_hash = XXH3_64bits(spv.data(), spv.size() * 4);
         list_last_spirv = spirv_hash;
+        LogSpirvProgram("step", params.hash, spv);
         auto& made = program_spirv[params.hash];
         if (std::none_of(made.begin(), made.end(), [](const auto& entry) { return entry.first == translating_classes; })) {
             made.emplace_back(translating_classes, spirv_hash);
@@ -1900,6 +1914,14 @@ void PipelineCache::CompileAheadWork() {
                 std::memcpy(&rt.hw.fs.addr_flags, &addr, sizeof(addr));
                 rt.hw.fs.num_inputs = inputs;
                 rt.hw.fs.z_export_format = static_cast<AmdGpu::ShaderExportFormat>(z_format & 0xff);
+                // What the shader exports besides colour, as PipelineCache::BuildRuntimeInfo
+                // reads DB_SHADER_CONTROL; the header holds the register.
+                const auto control = std::bit_cast<AmdGpu::DepthShaderControl>(shader.depth_control);
+                rt.hw.fs.mrtz_mask = control.z_export_enable |
+                                     (control.stencil_op_val_export_enable |
+                                      control.stencil_test_val_export_enable) << 1 |
+                                     control.mask_export_enable << 2 |
+                                     control.coverage_to_mask_enable << 3;
                 for (size_t i = 0; i < input_order.size(); ++i) {
                     rt.hw.fs.inputs[i].param_index = input_order[i];
                 }
@@ -2181,6 +2203,7 @@ VideoCore::Backend::ShaderHandle PipelineCache::CompileModule(Shader::Info& info
     const auto ir_program = Shader::TranslateProgram(code, pools, info, runtime_info, profile);
     const auto binding_before_emit = binding;
     auto spv = Shader::Backend::SPIRV::EmitSPIRV(profile, runtime_info, ir_program, binding);
+    LogSpirvProgram("play", info.pgm_hash, spv);
     const bool fixed_quad_probe = FixedQuadProbe();
     if (fixed_quad_probe && info.sw_stage == SwStage::TessellationControl) {
         std::printf("Fixed quad hull eligibility: outer %u\n", info.fixed_quad_outer);

@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <string>
 
+#include <xxhash.h>
 #include "bbport_guest_memory.h"
 #include "bbport_metal_residency.h"
 #include "video_core/renderer_metal/mtl_resources.h"
@@ -585,6 +586,16 @@ Backend::ShaderAllocation BackendDevice::CreateShader(std::span<const u32> spirv
             std::printf("Metal frame: %llu shaders made, %.1f MiB of SPIR-V (no MoltenVK module "
                         "copies)\n",
                         static_cast<unsigned long long>(count), double(bytes) / (1 << 20));
+        }
+        // BB_SPIRV_LOG=1: who made each module (its name; translations name their program).
+        static const bool spirv_log = [] {
+            const char* env = std::getenv("BB_SPIRV_LOG");
+            return env && env[0] == '1';
+        }();
+        if (spirv_log) {
+            std::printf("SPIR-V module name: %llx %.*s\n",
+                        static_cast<unsigned long long>(XXH3_64bits(spirv.data(), spirv.size_bytes())),
+                        int(name.size()), name.data());
         }
         MetalShadow::RegisterModule(vk::ShaderModule{reinterpret_cast<VkShaderModule>(native)},
                                     spirv);

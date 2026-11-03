@@ -194,6 +194,7 @@ public:
         shader.bundle = bundle;
         shader.name = std::move(name);
         shader.word13 = w[13];
+        shader.depth_control = w[14];
         shader.word15 = w[15];
         out.code.resize(out.code.size() + (length + 3) / 4);
         std::memcpy(reinterpret_cast<char*>(out.code.data()) + shader.offset, data.data() + code,

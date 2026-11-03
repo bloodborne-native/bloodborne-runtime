@@ -34,7 +34,27 @@ struct TilingInfo {
 
 TileManager::TileManager(Backend::Device& device_, VideoCore::Backend::Transfers& runtime_,
                          StreamBuffer& stream_buffer_)
-    : device{device_}, runtime{runtime_}, stream_buffer{stream_buffer_} {}
+    : device{device_}, runtime{runtime_}, stream_buffer{stream_buffer_} {
+    // bbport: the tiling kernels the game uses, made at start rather than at their first image
+    // (on Metal each tile mode and width is a kernel of its own, compiled when it is made): the
+    // modes and pixel widths a session in Iosefka's Clinic tiles and detiles.
+    using AmdGpu::TileMode;
+    static constexpr std::array<std::pair<TileMode, u32>, 9> used{{
+        {TileMode::Thin1DThin, 8}, {TileMode::Thin1DThin, 32}, {TileMode::Thin1DThin, 64},
+        {TileMode::Thin1DThin, 128}, {TileMode::Thin2DThin, 32}, {TileMode::Thin2DThin, 64},
+        {TileMode::Display2DThin, 32}, {TileMode::Depth2DThin64, 16},
+        {TileMode::Depth2DThin64, 32},
+    }};
+    for (const auto& [mode, bits] : used) {
+        ImageInfo info{};
+        info.tile_mode = mode;
+        info.array_mode = AmdGpu::GetArrayMode(mode);
+        info.num_bits = bits;
+        info.num_samples = 1;
+        GetTilingPipeline(info, false);
+        GetTilingPipeline(info, true);
+    }
+}
 
 TileManager::~TileManager() = default;
 

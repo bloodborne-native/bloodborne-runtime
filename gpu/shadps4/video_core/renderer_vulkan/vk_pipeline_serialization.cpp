@@ -302,6 +302,7 @@ bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage) 
     // Permutation hash depends on shader variation index. To prevent collisions, we need insert it
     // at the exact position rather than append
 
+    LogSpirvProgram("cache", program->info.pgm_hash, spv);
     VideoCore::Backend::ShaderHandle module{};
     // bbport: a module the driver rejects is a damaged entry (WarmUp rebuilds the cache), not a
     // fatal error as in CompileSPV.

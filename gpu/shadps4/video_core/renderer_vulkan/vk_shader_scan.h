@@ -32,6 +32,7 @@ struct ScannedShader {
     std::vector<std::vector<u8>> attribute_classes;
     std::string bundle;              ///< the file's stem; empty in the executable
     std::string name;                ///< its file name in the bundle, in lower case
+    u32 depth_control{};             ///< pixel: DB_SHADER_CONTROL (header word 14)
     u32 word13{};                    ///< pixel: header words that tell passes apart
     u32 word15{};
     std::vector<u8> exports;         ///< vertex: each export's parameter

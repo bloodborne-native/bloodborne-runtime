@@ -32,6 +32,9 @@ struct Info;
 
 namespace Vulkan {
 
+/// BB_SPIRV_LOG=1: a translation's program and SPIR-V hash (vk_pipeline_cache.cpp).
+void LogSpirvProgram(const char* where, u64 program, std::span<const u32> spirv);
+
 class Instance;
 class Scheduler;
 class ShaderCache;
