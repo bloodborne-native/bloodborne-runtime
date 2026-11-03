@@ -11,6 +11,10 @@ them every frame to find out what to draw. That takes about 0.6 of a core.
   99.94% of the engine's draws match their packets, with state and resources agreeing.
 - **Every input of a draw found in the draw state:** buffer addresses and resource slots.
 - Mesh draws can bind their resources from that state.
+- **Recorded command lists:** the engine's graphics layer can record its context calls into a list and
+  replay them later: 33 commands, ids 0 to 32 (vertex buffers, each stage's slots and shader, the six
+  draw kinds, dispatch and the pipeline state). A draw can reach the context that way as well
+  (`CG::recordDraw`, `CG::replayDraw`).
 
 All of this is behind `BB_RENDER_BOUNDARY`, a developer switch. No player build sets it, and without
 it the hooks are not installed.
