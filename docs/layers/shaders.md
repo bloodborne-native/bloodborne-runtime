@@ -11,6 +11,9 @@ them once, ahead of time, rather than replace them by hand.
 - **A compile step** in the launcher's recompiler settings: off by default, it builds shaders and
   pipelines from the player's own game files, with nothing recorded and nothing shipped.
 - **Pipelines from the engine's rules:** which targets, blends and vertex formats each pass uses.
+  Model passes take their blends from the engine's own state tables: five material modes (opaque,
+  alpha, multiply, add, subtract) in the group each pass's draw flags choose, and the point-light
+  renderer's two fixed blends.
 - **Shaders independent of the draw** where the source never read what differed.
 - **Compute strides read at run time,** so a structure's size is no longer a shader form, and mixes
   of formats across a program's bindings.
@@ -25,9 +28,10 @@ them once, ahead of time, rather than replace them by hand.
 After the step, 253 of the 295 sources one session in Iosefka's Clinic used were already built
 (86%): 132 of 136 fragment, 83 of 93 vertex, 38 of 61 compute and 0 of 5 tessellation.
 
-The step builds 2,988,492 pipelines and none fails (before: 656,734 of 3.3 million failed). 71,073
+The step builds 3,067,704 pipelines and none fails (before: 656,734 of 3.3 million failed). 71,073
 planned pipelines have no shader: one of their programs was not translated (the translator stops
-on 167 programs).
+on 167 programs). Of the 207 pipelines one test session noted, the rules plan 197; the other 10 are
+engine 2D and post-effect programs.
 
 From empty caches, a first play's worst frame is 561 ms, with 10 frames over 100 ms. That is one run,
 standing still. With no step at all it was 1.9 s; with recorded states it is 258 ms. The step takes

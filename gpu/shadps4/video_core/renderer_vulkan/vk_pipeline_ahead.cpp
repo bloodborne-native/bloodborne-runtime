@@ -8,6 +8,7 @@
 #include <map>
 #include <mutex>
 #include <set>
+#include <tuple>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -125,6 +126,25 @@ std::string MakeState(std::span<const u64> colours, u32 blend, u32 write_mask, u
     return StateOf(key);
 }
 
+/// One state with each target's own blend and write mask (`blends` and `masks` as long as `colours`).
+std::string MakeStatePerTarget(std::span<const u64> colours, std::span<const u32> blends,
+                               std::span<const u32> masks, u32 z, u32 topology) {
+    auto state = MakeState(colours, NoBlend, 0, z, topology);
+    for (u32 i = 0; i < colours.size(); ++i) {
+        std::memcpy(state.data() + offsetof(GraphicsPipelineKey, blend_controls) - StateStart + i * 4,
+                    &blends[i], 4);
+        std::memcpy(state.data() + offsetof(GraphicsPipelineKey, write_masks) - StateStart + i * 4,
+                    &masks[i], 4);
+    }
+    return state;
+}
+
+// The engine's material blends (GXGraphics::createCommonStates, Class_53b8d30::applyBlendState in
+// the recompiler's annotations): five modes (opaque, alpha, multiply, add, subtract), in groups
+// that a pass's draw flags choose (SceneRenderer::setupPassDrawItem). The words are the blend
+// registers those states encode to; alpha to coverage changes no pipeline.
+constexpr std::array<u32, 4> BlendModes{0x60010504, 0x60010008, 0x60010104, 0x60010184};
+
 /// A model pass's states; a pass with a colour word of `targets` entries.
 void ModelStates(std::string_view pass, u32 targets, std::set<std::string>& out) {
     if (pass.starts_with("dptv")) {
@@ -137,18 +157,41 @@ void ModelStates(std::string_view pass, u32 targets, std::set<std::string>& out)
     } else if (pass.starts_with("gbuf")) {
         constexpr std::array colours{Rgba8, Rgba8, Srgb8, Rgba8, R11G11B10, Rgba16f, Rgba16f};
         const std::span used{colours.data(), std::min<size_t>(targets, colours.size())};
-        out.insert(MakeState(used, NoBlend, 0xf, DepthStencil, TriangleList));
-        out.insert(MakeState(used, Alpha, 0x7, DepthStencil, TriangleList));
+        if (pass.starts_with("gbuf2")) {
+            // Gbuf2 (group 4): the first target is never written, the others RGB when blended.
+            std::vector<u32> blends(used.size()), masks(used.size(), 0xf);
+            masks[0] = 0;
+            out.insert(MakeStatePerTarget(used, blends, masks, DepthStencil, TriangleList));
+            for (const u32 mode : BlendModes) {
+                std::fill(blends.begin(), blends.end(), mode);
+                std::fill(masks.begin() + 1, masks.end(), 0x7);
+                out.insert(MakeStatePerTarget(used, blends, masks, DepthStencil, TriangleList));
+            }
+        } else {
+            // Gbuf (group 3): opaque writes everything, blended modes RGB only.
+            out.insert(MakeState(used, NoBlend, 0xf, DepthStencil, TriangleList));
+            for (const u32 mode : BlendModes) {
+                out.insert(MakeState(used, mode, 0x7, DepthStencil, TriangleList));
+            }
+        }
     } else if (pass.starts_with("pnt")) {
+        // Point lights: the light renderer's fixed blends (material blends are skipped).
         const std::array colours{Srgb8, Rgba8};
-        out.insert(MakeState(colours, 0x65000504, 0xf, DepthStencil, TriangleList));
+        for (const u32 blend : {0x65000504u, 0x65000008u}) {
+            out.insert(MakeState(colours, blend, 0xf, DepthStencil, TriangleList));
+        }
     } else if (pass == "velo") {
         const std::array colours{Rgba8};
         out.insert(MakeState(colours, NoBlend, 0xf, DepthStencil, TriangleList));
-    } else { // forward passes: the material blends
+        for (const u32 mode : BlendModes) {
+            out.insert(MakeState(colours, mode, 0xf, DepthStencil, TriangleList));
+        }
+    } else { // forward and light passes: the material's mode, group 0 (Lpp0: RGB only)
         const std::array colours{Rgba16f};
-        for (const u32 blend : {NoBlend, Additive, Alpha}) {
-            out.insert(MakeState(colours, blend, 0xf, DepthStencil, TriangleList));
+        const u32 mask = pass == "lpp0" ? 0x7 : 0xf;
+        out.insert(MakeState(colours, NoBlend, 0xf, DepthStencil, TriangleList));
+        for (const u32 mode : BlendModes) {
+            out.insert(MakeState(colours, mode, mask, DepthStencil, TriangleList));
         }
     }
 }
@@ -678,6 +721,47 @@ void CheckPlan(const ShaderScan& scan, std::span<const AheadPipeline> seen) {
     });
     std::printf("Plan check: %zu planned; of %zu seen, %zu found\n", planned.size(), seen.size(),
                 size_t(found));
+    // Each one not planned, with what the plan has for its shaders: the rule that misses it.
+    std::unordered_map<u64, const ScannedShader*> by_hash;
+    for (const auto& shader : scan.shaders) {
+        by_hash.emplace(shader.hash, &shader);
+    }
+    std::set<std::pair<u64, u64>> planned_pairs;
+    std::set<std::tuple<u64, u64, std::string>> planned_states;
+    for (const auto& raw : planned) {
+        const auto pipeline = clean(raw);
+        planned_pairs.emplace(pipeline.vertex, pipeline.pixel);
+        planned_states.emplace(pipeline.vertex, pipeline.pixel, StateOf(pipeline.key));
+    }
+    for (const auto& raw : seen) {
+        if (exact.contains(whole(raw))) {
+            continue;
+        }
+        const auto pipeline = clean(raw);
+        const auto& key = pipeline.key;
+        const auto name = [&](u64 hash) {
+            const auto it = by_hash.find(hash);
+            return it == by_hash.end() ? std::string{"?"} : it->second->bundle + "/" + it->second->name;
+        };
+        std::string targets;
+        for (u32 i = 0; i < key.num_color_attachments && i < AmdGpu::NUM_COLOR_BUFFERS; ++i) {
+            u32 blend = 0, mask = 0;
+            std::memcpy(&blend, reinterpret_cast<const char*>(&key) + offsetof(GraphicsPipelineKey, blend_controls) + i * 4, 4);
+            std::memcpy(&mask, reinterpret_cast<const char*>(&key) + offsetof(GraphicsPipelineKey, write_masks) + i * 4, 4);
+            u64 colour = 0;
+            std::memcpy(&colour, &key.color_buffers[i], 8);
+            targets += fmt::format(" [{:x} {:x}/{:x}]", colour, blend, mask);
+        }
+        u32 topology = 0, z = 0;
+        std::memcpy(&z, reinterpret_cast<const char*>(&key) + sizeof(key) - 8, 4);
+        std::memcpy(&topology, reinterpret_cast<const char*>(&key) + sizeof(key) - 4, 4);
+        const char* why = !planned_pairs.contains({pipeline.vertex, pipeline.pixel}) ? "pair not planned"
+                          : planned_states.contains({pipeline.vertex, pipeline.pixel, StateOf(key)})
+                              ? "state planned, vertex formats differ"
+                              : "pair planned, state not";
+        std::printf("Plan check: missed %s + %s: %s; z %x topology %x%s\n", name(pipeline.vertex).c_str(),
+                    name(pipeline.pixel).c_str(), why, z, topology, targets.c_str());
+    }
     std::fflush(stdout);
 }
 
