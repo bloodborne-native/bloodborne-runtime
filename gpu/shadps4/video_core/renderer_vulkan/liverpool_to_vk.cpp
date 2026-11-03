@@ -790,7 +790,7 @@ Backend::Format SurfaceFormat(AmdGpu::DataFormat data_format, AmdGpu::NumberForm
     if (result != Backend::Format::Undefined || data_format == AmdGpu::DataFormat::FormatInvalid) {
         return result;
     }
-    // bbport: a combination no real descriptor has (seen: data_format=6/num_format=1 and 15/4),
+    // bbport: a combination no real descriptor has (seen: data_format=6/num_format=1),
     // read from game memory the game may be rewriting (a stale sharp). It stopped the game; now
     // the same data format with a number format that exists keeps the element size, and that
     // draw reads garbage for a frame. Same approach as Supermedo/bloodborne_pc 3e3b760

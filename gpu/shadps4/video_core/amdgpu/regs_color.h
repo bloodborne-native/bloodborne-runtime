@@ -197,7 +197,8 @@ struct ColorBuffer {
     std::array<u32, 2> pad1;
 
     operator bool() const {
-        return base_address && info.format;
+        // bbport: an unused format value reads as no target (RemapDataFormat).
+        return base_address && GetDataFmt() != DataFormat::FormatInvalid;
     }
 
     u32 Pitch() const {

@@ -208,6 +208,13 @@ constexpr DataFormat RemapDataFormat(const DataFormat format) {
     case DataFormat::Format5_5_5_1:
         return DataFormat::Format1_5_5_5;
     default:
+        // bbport: values the ISA leaves unused (15, 23-31, 42, 43) come only from a stale
+        // descriptor the game is rewriting; they read as invalid (a null texture, a skipped
+        // vertex buffer, zeros from a buffer load) instead of stopping the game (issue #11).
+        if (const u32 value = static_cast<u32>(format);
+            value == 15 || (value >= 23 && value <= 31) || value == 42 || value == 43) {
+            return DataFormat::FormatInvalid;
+        }
         return format;
     }
 }
