@@ -54,8 +54,9 @@ def main():
     trace = args.trace
     labels, kinds = {}, {}
     for r in m.rows(m.export(trace, 'metal-application-intervals')):
-        if 'bb-probe' in r['process'][1] and 'encoder-id' in r and ' - :' in r['event-label'][1]:
-            labels[r['encoder-id'][0]] = r['event-label'][1].split(' - :', 1)[1].split(' (bb:')[0]
+        name = m.pass_label(r['event-label'][1])
+        if 'bb-probe' in r['process'][1] and 'encoder-id' in r and name is not None:
+            labels[r['encoder-id'][0]] = name.split(' (bb:')[0]
     for r in m.rows(m.export(trace, 'metal-application-encoders-list')):
         if 'bb-probe' in r['process'][1]:
             kinds[r['encoder-id'][0]] = re.sub(r'\d+', 'N', r['encoder-label'][1])

@@ -1038,9 +1038,13 @@ struct Hook<I, R (*)(A...)> {
         if constexpr (I == Id_vkCmdPipelineBarrier || I == Id_vkCmdPipelineBarrier2 ||
                       I == Id_vkCmdPipelineBarrier2KHR) {
             F::Barrier(o);
-        } else if constexpr (I == Id_vkCmdBeginDebugUtilsLabelEXT ||
-                             I == Id_vkCmdEndDebugUtilsLabelEXT ||
-                             I == Id_vkCmdInsertDebugUtilsLabelEXT || I == Id_vkCmdSetLineWidth ||
+        } else if constexpr (I == Id_vkCmdBeginDebugUtilsLabelEXT) {
+            // BB_PASS_LABELS=1: names the render encoders of the next pass.
+            const VkDebugUtilsLabelEXT* label = std::get<1>(t);
+            o.pass_label = label && label->pLabelName ? label->pLabelName : "";
+        } else if constexpr (I == Id_vkCmdEndDebugUtilsLabelEXT) {
+            o.pass_label.clear();
+        } else if constexpr (I == Id_vkCmdInsertDebugUtilsLabelEXT || I == Id_vkCmdSetLineWidth ||
                              I == Id_vkCmdSetPrimitiveRestartEnable ||
                              I == Id_vkCmdSetDepthBoundsTestEnable || I == Id_vkCmdSetDepthBounds ||
                              I == Id_vkCmdWriteTimestamp || I == Id_vkCmdWriteTimestamp2 ||

@@ -75,6 +75,21 @@ upscalers are for outputs above 1080p, where native resolution needs too much me
   attaching); leave them out. The busier views (about 1,500 draws, about 48 FPS) have no Metal
   trace yet.
 
+  By target pass (a trace with every draw in a pass of its own, about 800 draws a frame; shares
+  of the draws' GPU time):
+
+  | Pass | Share | Draws a frame |
+  |---|---|---|
+  | G-buffer (six 1080p targets) | 38% (fragment 56%, vertex 44%) | about 520 |
+  | One 1080p RGBA16F target | 16% (almost all fragment) | about 105 |
+  | Two 1080p R11G11B10 targets | 14% | about 345 |
+  | 32×32 RG16F targets | 12% (vertex 70%) | about 230 |
+  | 4096×4096 depth (shadows) | 5% | about 55 |
+  | The rest | 15% | |
+
+  The two most expensive shader pairs share one G-buffer pixel shader: together 20% of the
+  draws' time.
+
 The two MoltenVK traces on record:
 
 - **The clinic, MoltenVK, native 1080p:** about 25 ms of GPU work and 6–8 ms of GPU idle a frame

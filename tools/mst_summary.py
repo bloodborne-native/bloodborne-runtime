@@ -40,6 +40,16 @@ def rows(root):
         yield values
 
 
+def pass_label(text):
+    """The BB_PASS_LABELS name in an application interval's label, or None. MoltenVK writes
+    'group - :name (bb:...)'; the Metal renderer names the render encoder 'pass ...'."""
+    if ' - :' in text:
+        return text.split(' - :', 1)[1]
+    if text.startswith('pass '):
+        return text
+    return None
+
+
 def print_labels(trace, process, by_encoder):
     """GPU time per debug label (BB_PASS_LABELS=1 names each render pass), joined by encoder."""
     label_of = {}
@@ -47,8 +57,8 @@ def print_labels(trace, process, by_encoder):
         if process not in r['process'][1] or 'encoder-id' not in r:
             continue
         text = r['event-label'][1]
-        if ' - :' in text:
-            label_of[r['encoder-id'][0]] = text.split(' - :', 1)[1].rsplit(' (', 2)[0]
+        if (name := pass_label(text)) is not None:
+            label_of[r['encoder-id'][0]] = name.rsplit(' (', 2)[0]
     if not label_of:
         return
     total = collections.defaultdict(collections.Counter)

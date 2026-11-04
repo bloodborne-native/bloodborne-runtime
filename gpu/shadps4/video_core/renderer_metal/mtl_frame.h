@@ -15,6 +15,7 @@
 #include <array>
 #include <atomic>
 #include <memory>
+#include <string>
 #include <unordered_map>
 #include <vector>
 #include "video_core/renderer_vulkan/vk_common.h"
@@ -84,6 +85,9 @@ struct Owned {
     MTLRenderPassDescriptor* pass_first; ///< as begun (its clears); opened at the first draw
     bool pass_opened{};                  ///< an encoder of this pass was created
     bool pass_clears{};                  ///< pass_first clears something
+    /// BB_PASS_LABELS=1: the open debug label (vkCmdBeginDebugUtilsLabelEXT), the name of every
+    /// render encoder created under it, so a Metal System Trace names passes and shaders.
+    std::string pass_label;
     // Scratch memory for tessellation (bump-allocated, kept until the GPU is done).
     id<MTLBuffer> scratch;
     u64 scratch_used{};

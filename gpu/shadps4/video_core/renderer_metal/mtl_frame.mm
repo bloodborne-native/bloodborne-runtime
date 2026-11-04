@@ -254,6 +254,9 @@ id<MTLRenderCommandEncoder> RenderEncoder(Owned& o) {
     o.cache = {};
     if (o.render) {
         UseAddressBuffers(o.render, true);
+        if (!o.pass_label.empty()) {
+            o.render.label = [NSString stringWithUTF8String:o.pass_label.c_str()];
+        }
     }
     return o.render;
 }
