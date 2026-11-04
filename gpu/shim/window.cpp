@@ -16,6 +16,9 @@
 #include "common/logging/log.h"
 #include "sdl_window.h"
 #include "bbport_cursor.h"
+#if defined(__APPLE__) && TARGET_OS_OSX
+#include "bbport_mac_menu.h"
+#endif
 #include "bbport_frame_rate.h"
 #include "bbport_touch_controls.h"
 #include "bbport_overlay.h"
@@ -181,6 +184,9 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
     window = SDL_CreateWindowWithProperties(props);
     SDL_DestroyProperties(props);
     ASSERT_MSG(window, "Failed to create window: {}", SDL_GetError());
+#if defined(__APPLE__) && TARGET_OS_OSX
+    BbMacMenu::ClearCommandShortcuts();
+#endif
     // The cursor over the game: the port's own (BB_CURSOR=0: the system's).
     if (SDL_Cursor* cursor = BbCursor::Create()) {
         SDL_SetCursor(cursor);

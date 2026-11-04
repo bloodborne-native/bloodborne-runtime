@@ -350,6 +350,10 @@ if (APPLE)
     set_source_files_properties(shim/bbport_metalfx.mm PROPERTIES LANGUAGE OBJCXX
         COMPILE_OPTIONS "-fobjc-arc")
     target_sources(bbgpu PRIVATE shim/bbport_metalfx.mm)
+    # The menu bar without Command shortcuts (shim/bbport_mac_menu.mm, app issue #14).
+    set_source_files_properties(shim/bbport_mac_menu.mm PROPERTIES LANGUAGE OBJCXX
+        COMPILE_OPTIONS "-fobjc-arc")
+    target_sources(bbgpu PRIVATE shim/bbport_mac_menu.mm)
     target_link_libraries(bbgpu PUBLIC "-framework QuartzCore" "-framework Metal" "-framework Cocoa")
     # Zydis's package names Zycore by -lZycore only: the deps prefix's lib directory.
     target_link_directories(bbgpu PRIVATE ${CMAKE_PREFIX_PATH}/lib)
