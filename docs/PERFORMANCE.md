@@ -66,11 +66,14 @@ upscalers are for outputs above 1080p, where native resolution needs too much me
 ## Where a frame's time goes
 
 - **The clinic, the Metal renderer, native 1080p** (one 7.1 s trace on 2026-11-04, a view with
-  about 940 draws a frame, 60–70 FPS): the GPU was busy 79% of the time and idle 21%, about 3 ms
-  of each frame. That is the same share as on MoltenVK. Of the encoders' GPU time, render passes
-  took 78% (fragment work about twice the vertex work), compute 11%, copies 8% and presenting 3%.
-  The fragment channel was busy 46% of the time, vertex 25% and compute 17% (they overlap).
-  The busier views (about 1,500 draws, about 48 FPS) have no Metal trace yet.
+  about 940 draws a frame, 69 FPS): in steady play the GPU was idle 6.9% of the time, about
+  1.0 ms of a 14.45 ms frame, against 6–8 ms on MoltenVK. Gaps between encoders are a few
+  microseconds; the GPU is busy almost the whole frame, so frame rate comes from less GPU work,
+  not from fewer pass breaks. Of the encoders' GPU time, render passes took 78% (fragment work
+  about twice the vertex work), compute 11%, copies 8% and presenting 3%. The first 2 s of a
+  trace hold gaps of up to 270 ms that the game's frame log does not have (the recorder
+  attaching); leave them out. The busier views (about 1,500 draws, about 48 FPS) have no Metal
+  trace yet.
 
 The two MoltenVK traces on record:
 
@@ -149,8 +152,8 @@ The MetalFX upscaler came from [bmy/bbport-mac](https://github.com/bmy/bbport-ma
 
 The order, by what each would gain in frame rate, CPU and memory: the app's
 [priorities](https://github.com/bloodborne-native/bloodborne-mac/blob/main/docs/ROADMAP.md#priorities). What it rests on is the
-figures above. The GPU sits idle about a fifth of the time on both renderers (about 3 ms a frame
-on Metal in one light view). On MoltenVK the largest GPU items were idle between encoders (6–8 ms in the clinic, from pass breaks) and vertex work
+figures above. On Metal the GPU is idle about 1 ms a frame (one light view), so
+the gain left is in the GPU's own work: fragment work first, then vertex work. On MoltenVK the largest GPU items were idle between encoders (6–8 ms in the clinic, from pass breaks) and vertex work
 (shaders read constants one value at a time from storage buffers; constant buffers might let Metal
 preload them).
 
