@@ -234,6 +234,80 @@ void UseAddressBuffers(id<MTLCommandEncoder> encoder, bool render) {
     }
 }
 
+// ---- Fenced ordering (BB_METAL_FENCED_ORDERING, default on, =0 to turn it off) ----
+// Render encoders declared the whole guest memory (its pools) as read and compute encoders as
+// read and write, and the pools are hazard-tracked: Metal then serialised every render encoder
+// against the compute and blit encoders around it, dependent or not. Render encoders now declare
+// nothing (the memory stays resident through the residency set) and fences keep the real
+// orderings:
+// - read after write: every render encoder waits, before its vertex and fragment stages, for the
+//   latest compute/blit encoder (a fence each of them updates when it ends; compute and blit
+//   encoders stay ordered among themselves by tracking);
+// - write after read: a compute/blit encoder waits for the render encoders of its command buffer
+//   before it when the renderer recorded a barrier since its last wait (the barrier tracker
+//   found a conflict), and the first one of a command buffer waits for the last render encoder
+//   submitted before it.
+// Render encoders that write guest memory (BB_METAL_RENDER_WRITES=1) keep their declarations.
+bool Fenced() {
+    static const bool on = [] {
+        const char* env = std::getenv("BB_METAL_FENCED_ORDERING");
+        const char* writes = std::getenv("BB_METAL_RENDER_WRITES");
+        return !(env && env[0] == '0') && !(writes && writes[0] == '1');
+    }();
+    return on && residency;
+}
+id<MTLFence> NonrenderFence() {
+    static id<MTLFence> fence = [device newFence];
+    return fence;
+}
+id<MTLFence> LastRenderFence() {
+    static id<MTLFence> fence = [device newFence];
+    return fence;
+}
+/// Both global fences updated once by a submitted encoder before any recorded work, so that no
+/// wait ever refers to a fence nothing updated.
+void SeedOrderFences() {
+    id<MTLCommandBuffer> cmd = [queue commandBuffer];
+    cmd.label = @"bbport fence seed";
+    id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
+    [enc updateFence:NonrenderFence()];
+    [enc updateFence:LastRenderFence()];
+    [enc endEncoding];
+    [cmd commit];
+}
+constexpr MTLRenderStages kRenderStages = MTLRenderStageVertex | MTLRenderStageFragment;
+void FenceRenderStart(Owned& o) {
+    [o.render waitForFence:NonrenderFence() beforeStages:kRenderStages];
+}
+void FenceRenderEnd(Owned& o) {
+    if (o.fence_next == o.fence_pool.size()) {
+        o.fence_pool.push_back([device newFence]);
+    }
+    id<MTLFence> fence = o.fence_pool[o.fence_next++];
+    [o.render updateFence:fence afterStages:kRenderStages];
+    [o.render updateFence:LastRenderFence() afterStages:kRenderStages];
+    o.render_fences.push_back(fence);
+}
+template <typename Encoder>
+void FenceNonrenderStart(Owned& o, Encoder encoder) {
+    if (!o.nonrender_seen) {
+        [encoder waitForFence:LastRenderFence()];
+        o.nonrender_seen = true;
+    }
+    if (o.war_pending) {
+        for (id<MTLFence> fence : o.render_fences) {
+            [encoder waitForFence:fence];
+        }
+        o.render_fences.clear();
+        o.fence_next = 0; // every fence in the pool has been waited on: free again
+    }
+    o.war_pending = false;
+}
+template <typename Encoder>
+void FenceNonrenderEnd(Encoder encoder) {
+    [encoder updateFence:NonrenderFence()];
+}
+
 /// The render encoder of the current pass, opened on first use: a pass without draws costs
 /// nothing unless it clears (EndRendering), and work before its first draw (tessellation
 /// kernels) goes before it instead of splitting it.
@@ -242,10 +316,16 @@ id<MTLRenderCommandEncoder> RenderEncoder(Owned& o) {
         return o.render;
     }
     if (o.compute) {
+        if (Fenced()) {
+            FenceNonrenderEnd(o.compute);
+        }
         [o.compute endEncoding];
         o.compute = nil;
     }
     if (o.blit) {
+        if (Fenced()) {
+            FenceNonrenderEnd(o.blit);
+        }
         [o.blit endEncoding];
         o.blit = nil;
     }
@@ -253,7 +333,11 @@ id<MTLRenderCommandEncoder> RenderEncoder(Owned& o) {
     o.pass_opened = true;
     o.cache = {};
     if (o.render) {
-        UseAddressBuffers(o.render, true);
+        if (Fenced()) {
+            FenceRenderStart(o);
+        } else {
+            UseAddressBuffers(o.render, true);
+        }
     }
     return o.render;
 }
@@ -265,6 +349,9 @@ id<MTLComputeCommandEncoder> ComputeEncoder(Owned& o) {
     EndEncoders(o);
     o.compute = [o.cmd computeCommandEncoderWithDispatchType:MTLDispatchTypeSerial];
     UseAddressBuffers(o.compute, false);
+    if (Fenced()) {
+        FenceNonrenderStart(o, o.compute);
+    }
     return o.compute;
 }
 
@@ -274,6 +361,9 @@ id<MTLBlitCommandEncoder> BlitEncoder(Owned& o) {
     }
     EndEncoders(o);
     o.blit = [o.cmd blitCommandEncoder];
+    if (Fenced()) {
+        FenceNonrenderStart(o, o.blit);
+    }
     return o.blit;
 }
 
@@ -706,6 +796,12 @@ Stats& GetStats() {
     return stats;
 }
 
+VkImage ImageOfView(VkImageView view) {
+    std::scoped_lock lock{maps_mutex};
+    const auto it = view_infos.find(view);
+    return it != view_infos.end() ? it->second.image : VK_NULL_HANDLE;
+}
+
 size_t AddressBufferCount() {
     std::scoped_lock lock{maps_mutex};
     return declared_buffers.size();
@@ -740,6 +836,9 @@ void Init(VkDevice dev, id<MTLCommandQueue> q, PFN_vkExportMetalObjectsEXT expor
     if (residency) {
         [residency commit];
         [queue addResidencySet:residency];
+        if (Fenced()) {
+            SeedOrderFences();
+        }
     } else {
         std::printf("Metal frame: no residency set (%s): every device-address buffer is declared "
                     "on each encoder instead\n",
@@ -750,17 +849,37 @@ void Init(VkDevice dev, id<MTLCommandQueue> q, PFN_vkExportMetalObjectsEXT expor
 void EndEncoders(Owned& o) {
     FlushPending(o);
     if (o.render) {
+        if (Fenced()) {
+            FenceRenderEnd(o);
+        }
         [o.render endEncoding];
         o.render = nil;
     }
     if (o.compute) {
+        if (Fenced()) {
+            FenceNonrenderEnd(o.compute);
+        }
         [o.compute endEncoding];
         o.compute = nil;
     }
     if (o.blit) {
+        if (Fenced()) {
+            FenceNonrenderEnd(o.blit);
+        }
         [o.blit endEncoding];
         o.blit = nil;
     }
+}
+
+void RetainFencesUntilDone(Owned& o) {
+    if (o.fence_pool.empty()) {
+        return;
+    }
+    // The command buffer does not retain what it uses (unretained references).
+    __block std::vector<id<MTLFence>> fences = o.fence_pool;
+    [o.cmd addCompletedHandler:^(id<MTLCommandBuffer>) {
+      fences.clear();
+    }];
 }
 
 void ReturnScratchWhenDone(Owned& o) {
@@ -782,6 +901,7 @@ void ReturnScratchWhenDone(Owned& o) {
 
 void CommitChunk(Owned& o) {
     EndEncoders(o);
+    RetainFencesUntilDone(o);
     ReturnScratchWhenDone(o);
     if (!o.keep.empty()) {
         __block std::vector<id<MTLBuffer>> keep = std::move(o.keep);
@@ -1057,9 +1177,13 @@ void DeviceAddressTaken(VkBuffer buffer) {
 }
 
 void Barrier(Owned& o) {
+    o.war_pending = true; // fenced ordering: the next compute/blit encoder waits for renders
     // Tracked resources order the encoders; inside a compute encoder dispatches are serial.
     // A blit encoder is ended so the next command sees its writes.
     if (o.blit) {
+        if (Fenced()) {
+            FenceNonrenderEnd(o.blit);
+        }
         [o.blit endEncoding];
         o.blit = nil;
     }
@@ -1198,6 +1322,9 @@ void EndRendering(Owned& o) {
         RenderEncoder(o); // a pass without draws still performs its clears
     }
     if (o.render) {
+        if (Fenced()) {
+            FenceRenderEnd(o);
+        }
         [o.render endEncoding];
         o.render = nil;
     }
@@ -1763,11 +1890,139 @@ void DispatchIndirect(Owned& o, VkBuffer buffer, VkDeviceSize offset) {
     ++stats.dispatches;
 }
 
+// bbport BB_COPIES_AS_COMPUTE (default on, =0 to turn it off): a small buffer copy, fill or update
+// (all regions <= BB_COPY_COMPUTE_MAX bytes, default 64 KiB) recorded while a compute encoder is
+// open runs as one vectorised compute dispatch in it (serial, so ordered with the dispatches
+// around it) instead of ending it for a blit encoder: each compute -> blit -> compute switch
+// left the GPU idle between encoders. 16 or 4 bytes per thread when aligned, else bytes;
+// overlapping regions and pending tessellation draws keep the blit. Compute bindings are never
+// cached: the next game dispatch rebinds everything.
+static bool BufferAsCompute(Owned& o, id<MTLBuffer> src, u64 src_base,
+                            id<MTLBuffer> dst, u64 dst_base, u32 count,
+                            const VkBufferCopy* regions, u8 fill) {
+    static const bool on = [] {
+        const char* env = std::getenv("BB_COPIES_AS_COMPUTE");
+        return !(env && env[0] == '0');
+    }();
+    if (!on || !o.compute || o.render || !o.pending.empty() || !count) return false;
+    static const u64 env_limit = []() -> u64 {
+        const char* e = std::getenv("BB_COPY_COMPUTE_MAX");
+        return e ? std::min<u64>(std::strtoull(e, nullptr, 0), 1ull << 30) : 65536;
+    }();
+    const u64 limit = env_limit;
+    u64 total = 0;
+    for (u32 i = 0; i < count; ++i) {
+        if (regions[i].size > limit - total) return false;
+        total += regions[i].size;
+    }
+    if (!total) return false;
+    // A single dispatch cannot preserve cross-region read/write or write/write dependencies.
+    // Checked by sorting, not pairwise: a copy-shader call can carry thousands of small regions,
+    // and comparing every pair of them on the recording thread stalled frames (costly). Very long lists stay blits.
+    if (count > 1024) return false;
+    using Span = std::pair<u64, u64>; // [start, end)
+    std::vector<Span> writes, reads;
+    writes.reserve(count);
+    for (u32 i = 0; i < count; ++i) {
+        const u64 d = dst_base + regions[i].dstOffset;
+        writes.push_back({d, d + regions[i].size});
+        if (src == dst) {
+            const u64 r = src_base + regions[i].srcOffset;
+            reads.push_back({r, r + regions[i].size});
+        }
+    }
+    std::sort(writes.begin(), writes.end());
+    for (size_t i = 1; i < writes.size(); ++i) {
+        if (writes[i].first < writes[i - 1].second) return false; // two writes overlap
+    }
+    if (src == dst) {
+        // Any read overlapping any write (the writes are sorted and disjoint now).
+        for (const Span& r : reads) {
+            auto it = std::upper_bound(writes.begin(), writes.end(), Span{r.first, ~0ull});
+            if (it != writes.begin() && std::prev(it)->second > r.first) return false;
+            if (it != writes.end() && it->first < r.second) return false;
+        }
+    }
+    struct Region { u64 src, dst; u32 end, width; };
+    static_assert(sizeof(Region) == 24);
+    std::vector<Region> rows;
+    u32 threads = 0;
+    for (u32 i = 0; i < count; ++i) {
+        const auto& r = regions[i];
+        const u64 a = src_base + r.srcOffset, b = dst_base + r.dstOffset;
+        const u64 alignment = (src ? a : 0) | b | r.size;
+        const u32 width = !(alignment & 15) ? 16 : !(alignment & 3) ? 4 : 1;
+        threads += r.size / width;
+        rows.push_back({a, b, threads, width});
+    }
+    static id<MTLComputePipelineState> pipeline;
+    static std::once_flag once;
+    std::call_once(once, [] {
+        NSString* source = @R"msl(
+#include <metal_stdlib>
+using namespace metal;
+struct Region { ulong src, dst; uint end, width; };
+struct Args { uint count, fill, copying; };
+kernel void buffer_vectors(device const uchar* src [[buffer(0)]],
+                           device uchar* dst [[buffer(1)]],
+                           constant Region* rows [[buffer(2)]],
+                           constant Args& a [[buffer(3)]], uint i [[thread_position_in_grid]]) {
+    uint lo = 0, hi = a.count;
+    while (lo < hi) {
+        uint mid = lo + (hi - lo) / 2;
+        if (i < rows[mid].end) hi = mid; else lo = mid + 1;
+    }
+    if (lo == a.count) return;
+    Region row = rows[lo];
+    uint start = lo ? rows[lo - 1].end : 0;
+    ulong off = ulong(i - start) * row.width;
+    uint pattern = a.fill * 0x01010101u;
+    if (row.width == 16)
+        *((device uint4*)(dst + row.dst + off)) = a.copying ?
+            *((device const uint4*)(src + row.src + off)) : uint4(pattern);
+    else if (row.width == 4)
+        *((device uint*)(dst + row.dst + off)) = a.copying ?
+            *((device const uint*)(src + row.src + off)) : pattern;
+    else dst[row.dst + off] = a.copying ? src[row.src + off] : uchar(a.fill);
+}
+)msl";
+        NSError* error = nil;
+        id<MTLLibrary> library = [device newLibraryWithSource:source options:nil error:&error];
+        id<MTLFunction> function = [library newFunctionWithName:@"buffer_vectors"];
+        if (function) pipeline = [device newComputePipelineStateWithFunction:function error:&error];
+        if (!pipeline) std::printf("Metal buffer kernel: %s\n", error.localizedDescription.UTF8String);
+    });
+    if (!pipeline) return false;
+    if (src) [o.compute useResource:src usage:MTLResourceUsageRead];
+    [o.compute useResource:dst usage:src == dst ? MTLResourceUsageRead | MTLResourceUsageWrite
+                                               : MTLResourceUsageWrite];
+    [o.compute setComputePipelineState:pipeline];
+    [o.compute setBuffer:src ? src : dst offset:0 atIndex:0];
+    [o.compute setBuffer:dst offset:0 atIndex:1];
+    const size_t bytes = rows.size() * sizeof(Region);
+    if (bytes <= 4096) {
+        [o.compute setBytes:rows.data() length:bytes atIndex:2];
+    } else {
+        id<MTLBuffer> table = [device newBufferWithBytes:rows.data() length:bytes
+                                               options:MTLResourceStorageModeShared];
+        if (!table) return false;
+        o.keep.push_back(table);
+        [o.compute useResource:table usage:MTLResourceUsageRead];
+        [o.compute setBuffer:table offset:0 atIndex:2];
+    }
+    struct { u32 count, fill, copying; } args{count, fill, src != nil};
+    [o.compute setBytes:&args length:sizeof(args) atIndex:3];
+    [o.compute dispatchThreads:MTLSizeMake(threads, 1, 1)
+         threadsPerThreadgroup:MTLSizeMake(std::min<NSUInteger>(256, pipeline.maxTotalThreadsPerThreadgroup), 1, 1)];
+    return true;
+}
+
 void CopyBuffer(Owned& o, VkBuffer src, VkBuffer dst, u32 count, const VkBufferCopy* regions) {
     const BufferRef s = ResolveBuffer(src), d = ResolveBuffer(dst);
     if (!s.buffer || !d.buffer) {
         return;
     }
+    if (BufferAsCompute(o, s.buffer, s.offset, d.buffer, d.offset, count, regions, 0)) return;
     id<MTLBlitCommandEncoder> blit = BlitEncoder(o);
     for (u32 i = 0; i < count; ++i) {
         [blit copyFromBuffer:s.buffer
@@ -1788,6 +2043,8 @@ void FillBuffer(Owned& o, VkBuffer dst, VkDeviceSize offset, VkDeviceSize size, 
         Log("vkCmdFillBuffer with a pattern of different bytes (filled with its low byte)");
     }
     const u64 length = size == VK_WHOLE_SIZE ? d.buffer.length - d.offset - offset : size;
+    const VkBufferCopy region{0, 0, length};
+    if (BufferAsCompute(o, nil, 0, d.buffer, d.offset + offset, 1, &region, b)) return;
     [BlitEncoder(o) fillBuffer:d.buffer range:NSMakeRange(d.offset + offset, length) value:b];
 }
 
@@ -1801,6 +2058,8 @@ void UpdateBuffer(Owned& o, VkBuffer dst, VkDeviceSize offset, VkDeviceSize size
                                                 length:size
                                                options:MTLResourceStorageModeShared];
     o.keep.push_back(staging); // the command buffer does not retain it
+    const VkBufferCopy region{0, 0, size};
+    if (BufferAsCompute(o, staging, 0, d.buffer, d.offset + offset, 1, &region, 0)) return;
     [BlitEncoder(o) copyFromBuffer:staging
                       sourceOffset:0
                           toBuffer:d.buffer

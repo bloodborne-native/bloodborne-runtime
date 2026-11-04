@@ -435,6 +435,7 @@ void CommitOwned(uint32_t count, Get&& get, const std::vector<EventSignal>* sign
             }
             CompleteFence(o->cmd, fence);
         }
+        MetalFrame::RetainFencesUntilDone(*o);
         MetalFrame::ReturnScratchWhenDone(*o);
         if (!o->keep.empty()) {
             // Our temporary buffers live until the GPU is done with them.
@@ -1177,6 +1178,10 @@ bool PresentEnabled() {
 
 bool FrameEnabled() {
     return frame_enabled;
+}
+
+unsigned long long ImageOfView(unsigned long long view) {
+    return (unsigned long long)MetalFrame::ImageOfView(VkImageView(view));
 }
 
 void* MetalOnlyPipeline(const void* graphics_info, const void* compute_info) {

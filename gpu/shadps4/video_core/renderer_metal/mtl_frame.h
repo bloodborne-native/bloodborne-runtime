@@ -84,6 +84,13 @@ struct Owned {
     MTLRenderPassDescriptor* pass_first; ///< as begun (its clears); opened at the first draw
     bool pass_opened{};                  ///< an encoder of this pass was created
     bool pass_clears{};                  ///< pass_first clears something
+    // Fenced ordering (BB_METAL_FENCED_ORDERING): render encoders do not declare the guest memory;
+    // fences order them against compute and blit encoders instead.
+    bool nonrender_seen{};                   ///< a compute or blit encoder was opened here
+    bool war_pending{};                      ///< a barrier since the last compute/blit wait
+    std::vector<id<MTLFence>> render_fences; ///< updated by render encoders since that wait
+    std::vector<id<MTLFence>> fence_pool;
+    size_t fence_next{};
     // Scratch memory for tessellation (bump-allocated, kept until the GPU is done).
     id<MTLBuffer> scratch;
     u64 scratch_used{};
@@ -167,6 +174,8 @@ void EndEncoders(Owned& o);
 /// order): the GPU starts on the frame while the rest is recorded. Also hands `keep` to the
 /// committed one.
 void CommitChunk(Owned& o);
+/// Fenced ordering: keeps this command buffer's fences until the GPU is done with it.
+void RetainFencesUntilDone(Owned& o);
 
 /// Hands the command buffer's scratch buffers back to the pool once the GPU is done with it
 /// (before commit).
@@ -245,5 +254,7 @@ struct Stats {
         skipped_emulated{}, skipped_discard{}, unsupported{}, tess_draws{}, tess_after_tess{};
 };
 Stats& GetStats();
+/// The image of a view (VK_NULL_HANDLE: not known).
+VkImage ImageOfView(VkImageView view);
 
 } // namespace MetalFrame
