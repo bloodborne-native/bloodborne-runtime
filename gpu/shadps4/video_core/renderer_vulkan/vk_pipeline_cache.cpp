@@ -11,6 +11,9 @@
 #include <map>
 #include <mutex>
 #include <pthread.h>
+#ifdef __APPLE__
+#include <sys/sysctl.h>
+#endif
 #include <ranges>
 #include <regex>
 #include <string>
@@ -1303,6 +1306,24 @@ bool PipelineCache::RefreshComputeKey() {
 // bbport: BB_SHADER_LOG=1 (N2.5): one line per new shader variant, with its conversion time; for a
 // program's first variant a summary of what it is specialized for, for a later one which parts
 // differ from the first (what an ahead-of-time conversion would have to predict).
+/// bbport: the system the compile step built its pipelines for (the macOS build and the Mac
+/// model). Metal's pipeline archive is unusable after a macOS update or on another Mac and is
+/// started over (mtl_pso_cache.mm), so the step runs again when this changes.
+static std::string PipelineSystem() {
+    std::string stamp;
+#ifdef __APPLE__
+    for (const char* name : {"kern.osversion", "hw.model"}) {
+        char value[128]{};
+        size_t size = sizeof(value) - 1;
+        if (sysctlbyname(name, value, &size, nullptr, 0) == 0) {
+            stamp += stamp.empty() ? "" : "/";
+            stamp += value;
+        }
+    }
+#endif
+    return stamp;
+}
+
 static bool ShaderLogOn() {
     static const bool on = [] {
         const char* env = std::getenv("BB_SHADER_LOG");
@@ -1565,7 +1586,7 @@ static void BuildPlanned(std::span<const AheadPipeline> planned, u32 states,
         thread.join();
     }
     record.close();
-    std::ofstream(cache / "pipelines-ahead.complete") << states;
+    std::ofstream(cache / "pipelines-ahead.complete") << states << ' ' << PipelineSystem();
     std::printf("Pipeline compile: %u built, %u skipped, %u failed, %u without a shader, %u without a "
                 "vertex shader for their attribute types, %.1f s\n",
                 made.load(), skipped.load(), failed.load(), no_shader.load(), no_form.load(),
@@ -1749,11 +1770,23 @@ void PipelineCache::CompileAhead() {
         constexpr u32 new_states_for_a_run = 4;
         const auto cache = Common::FS::GetUserPath(Common::FS::PathType::CacheDir);
         u32 version = 0, built = 0;
-        std::ifstream(cache / "pipelines-ahead.complete") >> built;
+        std::string system;
+        std::ifstream(cache / "pipelines-ahead.complete") >> built >> system;
+        const std::string current = PipelineSystem();
+        if (built && system.empty()) {
+            // Written before the system was recorded (0.9.5): taken as this system.
+            std::ofstream(cache / "pipelines-ahead.complete") << built << ' ' << current;
+            system = current;
+        }
         const u32 states = CountStates(ReadNotedPipelines(cache / "pipelines-seen.bin"));
         if (std::ifstream(cache / "shaders-ahead.txt.complete") >> version;
-            version == Serialization::ShaderBinaryVersion && states < built + new_states_for_a_run) {
+            version == Serialization::ShaderBinaryVersion && system == current &&
+            states < built + new_states_for_a_run) {
             return;
+        }
+        if (built && system != current) {
+            std::printf("Pipeline compile: built for %s, this is %s (a macOS update or another "
+                        "Mac): building again\n", system.c_str(), current.c_str());
         }
     }
     static std::atomic<bool> finished{false};

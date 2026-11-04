@@ -9,7 +9,9 @@ them once, ahead of time, rather than replace them by hand.
 ## What we did
 
 - **A compile step** in the launcher's recompiler settings: off by default, it builds shaders and
-  pipelines from the player's own game files, with nothing recorded and nothing shipped.
+  pipelines from the player's own game files, with nothing recorded and nothing shipped. Its
+  marker (`pipelines-ahead.complete`) records the macOS build and the Mac model, and the step
+  runs again when either changes, because Metal's pipeline archive is started over then.
 - **Pipelines from the engine's rules:** which targets, blends and vertex formats each pass uses.
   Model passes take their blends from the engine's own state tables: five material modes (opaque,
   alpha, multiply, add, subtract) in the group each pass's draw flags choose, and the point-light
