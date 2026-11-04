@@ -815,7 +815,9 @@ int bb_patches_build(const BbPatchOptions *o, uint8_t **blob, size_t *blob_size,
     const char *forced = getenv("BB_INTEL_TONEMAP_FIX");
     const int tonemap = forced && (!strcmp(forced, "0") || !strcmp(forced, "1")) ? !strcmp(forced, "1") : intel_cpu();
     if (tonemap && !names_has(&names, INTEL_TONEMAP)) names_add(&names, INTEL_TONEMAP, strlen(INTEL_TONEMAP));
-    if (strcmp(env_or("BB_SKIP_NETWORK_CHOICE", "1"), "0") && !names_has(&names, SKIP_NETWORK_CHOICE))
+    /* The title's PLAY ONLINE / PLAY OFFLINE dialog: skipped (offline) unless online play is on. */
+    const char *skip_default = !strcmp(env_or("BB_ONLINE", "0"), "1") ? "0" : "1";
+    if (strcmp(env_or("BB_SKIP_NETWORK_CHOICE", skip_default), "0") && !names_has(&names, SKIP_NETWORK_CHOICE))
         names_add(&names, SKIP_NETWORK_CHOICE, strlen(SKIP_NETWORK_CHOICE));
     if (strcmp(env_or("BB_GX_HEAP", "1"), "0") && !names_has(&names, GX_HEAP)) names_add(&names, GX_HEAP, strlen(GX_HEAP));
     /* Conflicts, and the debug menu only with its font files (the game crashes without them). */

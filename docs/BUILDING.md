@@ -88,7 +88,8 @@ BB_GAME_DIR=/path/to/your/game bash run.sh
 | `BB_METAL_CAPS=compare`, `=moltenvk` | `compare` logs every difference between the Metal backend's answers to the renderer's start-up capability queries and MoltenVK's (`Metal caps:` lines); `moltenvk` uses MoltenVK's answers |
 | `BB_VULKAN_LOADER` | Path to the optional Vulkan loader on the MoltenVK path; `run.sh` sets it from `deps/` or the app bundle |
 | `BB_RECOMP_LIB=PATH` | Load the recompiled library |
-| `BB_ONLINE=1`, `BB_NET_BACKEND=thd` | Online play through the online module (Seamless Hunt; `thd`: The Hunter's Dream, with the launcher's sign-in). Refused for an edited save set ([Architecture](ARCHITECTURE.md#the-ps4-runtime)) |
+| `BB_ONLINE=1`, `BB_NET_BACKEND=thd` | Online play through the online module (Seamless Hunt; `thd`: The Hunter's Dream, with the launcher's sign-in). Refused for an edited save set ([Architecture](ARCHITECTURE.md#the-ps4-runtime)). The title screen then shows its PLAY ONLINE / PLAY OFFLINE choice, skipped (offline) otherwise |
+| `BB_SKIP_NETWORK_CHOICE=0`, `=1` | Show or skip the title screen's PLAY ONLINE / PLAY OFFLINE choice either way (default: shown with `BB_ONLINE=1`, skipped without) |
 | `BB_LANGUAGE`, `BB_UI_LANGUAGE` | The game's language (PS4 code), the menu's (`en`, `pt-BR`, ...) |
 | `BB_MODS_DIR`, `BB_MODS_ENABLED=0` | Mods folder, or no mods |
 | `BB_PATCHES_DIR` | Third-party patches folder |

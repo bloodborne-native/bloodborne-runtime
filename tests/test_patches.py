@@ -221,5 +221,16 @@ class IntelTonemapTests(unittest.TestCase):
         self.assertIn(patches.INTEL_TONEMAP, names)
 
 
+class NetworkChoiceTests(unittest.TestCase):
+    def test_skipped_offline_shown_online(self):
+        self.assertTrue(patches.skip_network_choice({}))
+        self.assertTrue(patches.skip_network_choice({'BB_ONLINE': '0'}))
+        self.assertFalse(patches.skip_network_choice({'BB_ONLINE': '1'}))
+
+    def test_environment_sets_it_either_way(self):
+        self.assertFalse(patches.skip_network_choice({'BB_SKIP_NETWORK_CHOICE': '0'}))
+        self.assertTrue(patches.skip_network_choice({'BB_ONLINE': '1', 'BB_SKIP_NETWORK_CHOICE': '1'}))
+
+
 if __name__ == '__main__':
     unittest.main()

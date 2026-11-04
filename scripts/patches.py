@@ -68,13 +68,14 @@ def intel_cpu(cpuinfo='/proc/cpuinfo'):
         return False
 
 
-# The title's PLAY ONLINE / PLAY OFFLINE dialog: the port has no PSN, the game goes straight to the
-# main menu offline. On by default (the launcher's switch); BB_SKIP_NETWORK_CHOICE=0 shows it.
+# The title's PLAY ONLINE / PLAY OFFLINE dialog: skipped (straight to the main menu offline) unless
+# online play is on (BB_ONLINE=1); BB_SKIP_NETWORK_CHOICE=0 or 1 sets it either way.
 SKIP_NETWORK_CHOICE='Skip Online/Offline Choice'
 
 
 def skip_network_choice(env=os.environ):
-    return env.get('BB_SKIP_NETWORK_CHOICE','1')!='0'
+    default='0' if env.get('BB_ONLINE','0')=='1' else '1'
+    return env.get('BB_SKIP_NETWORK_CHOICE',default)!='0'
 
 
 # bbport 0.6: each GX command buffer's per-frame heap 1 MiB instead of 256 KiB (the game's NULL
