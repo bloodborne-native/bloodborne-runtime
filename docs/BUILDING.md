@@ -162,7 +162,9 @@ Mac warms up. Run the base first; when the new build reads worse, run one revers
 first) before calling it a cost.
 
 Metal System Traces: `TRACE=1`, read with `tools/mst_summary.py`, `tools/mst_passes.py TRACE
---complete-frames` and `tools/mst_shaders.py`. `xctrace` needs
+--complete-frames` and `tools/mst_shaders.py`. With the Metal renderer `--complete-frames` counts
+too few frames: 269 in a 7.1 s trace in which the game drew about 470. Read per-frame figures
+from the game's frame rate, or use shares of the span. `xctrace` needs
 `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`; recordings take over a minute to
 finalize after their time limit.
 
