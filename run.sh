@@ -81,7 +81,8 @@ mkdir -p "$out"
 # BB_PROBE_PROGRAM: the program itself, for run.sh's own questions (--print-scaled); BB_PROBE may
 # be a wrapper (gdb) around it.
 if [[ -n ${BB_PREBUILT:-} ]]; then
-    probe_program=${BB_PROBE_PROGRAM:-bin/bb-probe}
+    # The app sets BB_PROBE to its own program (Contents/MacOS/bb-probe): ask that one.
+    probe_program=${BB_PROBE_PROGRAM:-${BB_PROBE:-bin/bb-probe}}
 else
     probe_program=${BB_PROBE_PROGRAM:-out/bb-probe}
 fi
