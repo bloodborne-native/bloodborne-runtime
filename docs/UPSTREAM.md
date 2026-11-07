@@ -49,7 +49,8 @@ The compatibility level imported from bbport is **0.51**, plus the 0.6 items bel
 | Point-light shadow wedges (each cube face cleared on its own), the grid of item icons over the HUD (stencil masks) | To check on Metal and port into the shared core |
 | Occlusion samples counted only while the game's queries are open (about 0.8 ms of GPU time a frame on the PC) | Measured, not taken: three alternating pairs in Iosefka's Clinic, 39.1 against 38.9 FPS. On the PC the cost was waiting for the GPU to collect results; the Metal path does not wait for them |
 | The frame limiter without catch-up slots, the FPS drop after loading another save | To check |
-| Invert mouse X, a slow-walk key, skipping videos, the mouse auto-rotation off by default, *Exit to desktop* | To consider |
+| The slow-walk key (Left Alt held: the left stick at 40%, the game's walking pace) | Ported (`IN_WALK` in `runtime_pad.c`, key.walk; the launcher's Controls row; app issue #16) |
+| Invert mouse X, skipping videos, the mouse auto-rotation off by default, *Exit to desktop* | To consider |
 | Windows, the PC memory model only and heaps that grow, PCIe ring dedup and copy skip, NVIDIA/AMD specifics, DLSS, FSR 1 and FSR 4.1.2, FXAA/SMAA/GT-VBAO (Vulkan), BBSC, shader recipes from players' caches | Not applicable here, or covered otherwise (shaders ahead of time are shaders ahead of time) |
 
 The plan with every item is the app's [roadmap](https://github.com/bloodborne-native/bloodborne-mac/blob/main/docs/ROADMAP.md).
