@@ -7,12 +7,13 @@
  *   run), Left Shift the run (Circle held), Shift + Space the jump (Circle let go and pressed again
  *   while running), F and Enter Cross
  *   (interact, confirm), Q Triangle (blood vial), E L1 (transform the weapon), Tab and R Square
- *   (the quick item), C R3 (lock-on), Left Ctrl L3, Escape Options (the menu; Circle, the way back, while a game menu is open), G left touchpad
+ *   (the quick item), C R3 (lock-on), Left Ctrl L3, Left Alt (Option) walk (held), Escape Options (the menu; Circle, the way back, while a game menu is open), G left touchpad
  *   (gestures), Backspace right touchpad; the d-pad on 1 (left: the left hand's weapon), 2 (right:
  *   the right hand's), 3 (up), 4 (down) and the arrow keys.
  *   Mouse (once the game window is clicked; F1 or leaving the window releases it): look (the
  *   right stick), Left R1 (attack), Shift+Left R2, Right L2 (the gun), Middle R3, side buttons R2
- *   (X1) and L1 (X2), wheel the d-pad's up/down (quick items).
+ *   (X1) and L1 (X2), wheel the d-pad's up/down (quick items). In a game menu (the mouse a
+ *   pointer) Middle and the side buttons still count; Left and Right click and go back there.
  *   A binding may be a chord, "Left Shift+Mouse Left": while it is held, the second key's plain
  *   bindings do not count (Shift+Left is R2, not R2 and R1).
  *
@@ -291,12 +292,12 @@ enum {
     IN_CROSS, IN_CIRCLE, IN_SQUARE, IN_TRIANGLE, IN_L1, IN_R1, IN_L2, IN_R2, IN_L3, IN_R3,
     IN_OPTIONS, IN_TOUCHPAD, IN_TOUCHPAD_RIGHT, IN_UP, IN_DOWN, IN_LEFT, IN_RIGHT,
     IN_MOVE_UP, IN_MOVE_DOWN, IN_MOVE_LEFT, IN_MOVE_RIGHT, IN_LOOK_UP, IN_LOOK_DOWN, IN_LOOK_LEFT,
-    IN_LOOK_RIGHT, IN_SPRINT, IN_DODGE, IN_COUNT
+    IN_LOOK_RIGHT, IN_SPRINT, IN_DODGE, IN_WALK, IN_COUNT
 };
 static const char *const input_names[IN_COUNT]={
     "cross","circle","square","triangle","l1","r1","l2","r2","l3","r3","options","touchpad",
     "touchpad_right","up","down","left","right","move_up","move_down","move_left","move_right",
-    "look_up","look_down","look_left","look_right","sprint","dodge",
+    "look_up","look_down","look_left","look_right","sprint","dodge","walk",
 };
 static const uint32_t input_buttons[IN_COUNT]={
     BTN_CROSS,BTN_CIRCLE,BTN_SQUARE,BTN_TRIANGLE,BTN_L1,BTN_R1,BTN_L2,BTN_R2,BTN_L3,BTN_R3,
@@ -322,7 +323,7 @@ static void bind_defaults(void) {
     /* The header comment's layout. */
     enum { NONE=-1, SHIFT=SDL_SCANCODE_LSHIFT };
     static const struct { int input; int key; int mod; } keys[]={
-        {IN_DODGE,SDL_SCANCODE_SPACE,NONE}, {IN_SPRINT,SHIFT,NONE}, {IN_CROSS,SDL_SCANCODE_F,NONE},
+        {IN_DODGE,SDL_SCANCODE_SPACE,NONE}, {IN_SPRINT,SHIFT,NONE}, {IN_WALK,SDL_SCANCODE_LALT,NONE}, {IN_CROSS,SDL_SCANCODE_F,NONE},
         {IN_CROSS,SDL_SCANCODE_RETURN,NONE}, {IN_TRIANGLE,SDL_SCANCODE_Q,NONE},
         {IN_L1,SDL_SCANCODE_E,NONE}, {IN_SQUARE,SDL_SCANCODE_TAB,NONE}, {IN_SQUARE,SDL_SCANCODE_R,NONE},
         {IN_R3,SDL_SCANCODE_C,NONE}, {IN_L3,SDL_SCANCODE_LCTRL,NONE},
@@ -615,6 +616,12 @@ static void apply_keyboard(PadData *d, const bool *k) {
     /* A gamepad's stick is kept while no key moves it. */
     key_stick(&move_stick,d->timestamp,key_down(k,IN_MOVE_LEFT),key_down(k,IN_MOVE_RIGHT),
               key_down(k,IN_MOVE_UP),key_down(k,IN_MOVE_DOWN),&d->left_x,&d->left_y);
+    /* Walk (default Left Alt, Option on a Mac, held): the left stick at 40%, the game's walking
+     * pace, from the move keys or a gamepad's stick. From bbport 0.7 (0fc2921, deadinside28). */
+    if (key_down(k,IN_WALK)) {
+        d->left_x=(uint8_t)(128+((int)d->left_x-128)*2/5);
+        d->left_y=(uint8_t)(128+((int)d->left_y-128)*2/5);
+    }
     key_stick(&look_stick,d->timestamp,key_down(k,IN_LOOK_LEFT),key_down(k,IN_LOOK_RIGHT),
               key_down(k,IN_LOOK_UP),key_down(k,IN_LOOK_DOWN),&d->right_x,&d->right_y);
     memset((void *)key_latch,0,sizeof(key_latch));
@@ -1024,7 +1031,13 @@ static void sample_host(PadData *d) {
     const int captured=bbgpu_mouse_captured();
     if (bbgpu_overlay_captures_input()) { apply_mouse_look(d,0,0,d->timestamp,0); return; } /* menu open: neutral input */
     const bool *k=SDL_WasInit(SDL_INIT_VIDEO) ? SDL_GetKeyboardState(NULL) : NULL;
-    mouse_buttons=captured && SDL_WasInit(SDL_INIT_VIDEO) ? SDL_GetMouseState(NULL,NULL) : 0;
+    /* While the window holds the mouse, all its buttons; in a game menu (the mouse a pointer, app
+     * issue #18) the ones the pointer leaves alone: Middle and the side buttons (L1/R2 by default,
+     * the menus' tabs). Left and Right are the pointer's click and way back there. */
+    const SDL_MouseButtonFlags held=SDL_WasInit(SDL_INIT_VIDEO) ? SDL_GetMouseState(NULL,NULL) : 0;
+    mouse_buttons=captured ? held
+                 : bbgpu_pointer_wanted() ? held & (SDL_BUTTON_MMASK|SDL_BUTTON_X1MASK|SDL_BUTTON_X2MASK)
+                 : 0;
     mouse_wheel_step(d->timestamp,captured ? wheel_up : 0,captured ? wheel_down : 0);
     if (g) {
         int touch_right=0;

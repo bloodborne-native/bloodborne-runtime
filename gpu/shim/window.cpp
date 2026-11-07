@@ -500,6 +500,23 @@ bool WindowSDL::PollEvents() {
             mouse_grabbed = hold;
             SDL_SetWindowMouseGrab(window, hold);
         }
+        // App issue #17: in fullscreen the grab alone lets the pointer (a game menu's) reach the
+        // screen's top and bottom rows, where macOS slides in the menu bar and the Dock and the
+        // window loses the mouse until a click. The pointer is kept 4 points inside them.
+        static bool inset = false;
+        const bool fullscreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
+        const bool want_inset = hold && fullscreen;
+        static int inset_w = 0, inset_h = 0;
+        int ww = 0, wh = 0;
+        SDL_GetWindowSize(window, &ww, &wh);
+        if (want_inset != inset || (want_inset && (ww != inset_w || wh != inset_h))) {
+            inset = want_inset;
+            inset_w = ww;
+            inset_h = wh;
+            constexpr int Edge = 4;
+            const SDL_Rect rect{0, Edge, ww, wh - 2 * Edge};
+            SDL_SetWindowMouseRect(window, want_inset && wh > 4 * Edge ? &rect : nullptr);
+        }
         // Taken for looking without a click once the window has focus (retried slowly: a
         // compositor may refuse it).
         static u64 last_try_ms = 0;
