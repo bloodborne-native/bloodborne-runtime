@@ -110,6 +110,12 @@ Changes taken from other ports of bbport, with thanks:
   data being in the buffer cache (`TextureCache::GarbageCollectImages`); the port also found that
   our release of those images over the critical mark mostly did not happen.
 
+## Contributors
+
+Pull requests are taken with their authors' names in the commits; some are measured and landed by
+hand instead of merged. [classicrob](https://github.com/classicrob): exact barrier read ranges and
+merged interval sets for the copy hoist (runtime PR #11).
+
 ## Libraries
 
 - [MoltenVK](https://github.com/KhronosGroup/MoltenVK) (Apache-2.0). The Metal backend's answers to the renderer's start-up Vulkan queries (`renderer_metal/mtl_vk_caps_profile.inc`) are MoltenVK 1.4.2's answers on an Apple M3 Pro, recorded with `BB_METAL_CAPS=compare` (`tools/vk_caps_profile.py`).
