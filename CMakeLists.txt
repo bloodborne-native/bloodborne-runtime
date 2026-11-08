@@ -188,6 +188,10 @@ add_executable(bb-gpu-capabilities tools/gpu_capabilities.c)
 target_compile_options(bb-gpu-capabilities PRIVATE -std=c11 ${BB_WARNINGS})
 target_link_libraries(bb-gpu-capabilities PRIVATE PkgConfig::SDL3)
 if (APPLE)
+    # In the app it loads SDL3 from Frameworks/ as bb-probe does (app issue #19: without this path
+    # the bundle's copy had no LC_RPATH at all once the build's own was stripped, and the
+    # launcher's controller list and button assignment failed).
+    set_target_properties(bb-gpu-capabilities PROPERTIES INSTALL_RPATH "@executable_path/../Frameworks")
     bb_check_metal_link(bbprobe)
     bb_check_metal_link(bb-gpu-capabilities)
 endif()
