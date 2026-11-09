@@ -141,10 +141,12 @@ off at run time for bisection: `BB_TOGGLE_FILE` names a file holding a bit mask 
 250 ms).
 
 **Memory on the GPU.** The game's memory pool is used in place as GPU buffers, so the GPU reads
-the game's data where it is. It is split into two overlapping windows (3,584 and 3,520 MiB) so no
-binding offset reaches 4 GiB, where MoltenVK draws wrongly (`BufferCache::pool_upper`;
-`BB_POOL_SPLIT=0`: one buffer). Native Metal wraps the same two windows itself
-(`newBufferWithBytesNoCopy`); the other buffers and the images it makes directly in Metal. GPU
+the game's data where it is. On MoltenVK it is split into two overlapping windows (3,584 and
+3,520 MiB) so no binding offset reaches 4 GiB, where MoltenVK draws wrongly
+(`BufferCache::pool_upper`). Native Metal reads past 4 GiB correctly and wraps the whole pool as
+one buffer (`newBufferWithBytesNoCopy`), so the windows' overlap no longer counts against Metal's
+memory limit (`BB_POOL_SPLIT=0/1` forces one buffer or the windows); the other buffers and the
+images it makes directly in Metal. GPU
 objects stay in a Metal residency set (`gpu/shim/bbport_metal_residency.*`); removed ones are
 kept until the GPU has finished every submission that could use them.
 

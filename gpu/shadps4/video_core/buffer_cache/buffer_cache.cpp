@@ -33,6 +33,9 @@
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
+#if BB_METAL_BACKEND
+#include "video_core/renderer_metal/mtl_vk_layer.h"
+#endif
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/texture_cache/texture_cache.h"
 
@@ -593,9 +596,17 @@ BufferCache::BufferCache(Backend::Device& device_, const Vulkan::Instance& insta
         // one starts every 3 GiB and reaches 512 MiB into the next, and a binding uses the window
         // its start is in. The overlap is all the memory imported twice: a whole second import
         // from 3 GiB (0.7.0) put 17 GB in the residency set at 1440p (10 GB pool) and the device
-        // was lost at start. BB_POOL_SPLIT=0: one import of the whole pool.
+        // was lost at start. The Metal renderer reads past 4 GiB correctly (Metal's buffer offsets
+        // are 64-bit; the iPhone always ran it with one import), so it imports the pool once:
+        // the windows' 512 MiB overlaps counted against Metal's memory limit for nothing (8753 ->
+        // about 8240 MiB allocated at 1080p). BB_POOL_SPLIT=0/1 forces one import or the windows.
         const char* split_env = std::getenv("BB_POOL_SPLIT");
-        const bool split = !(split_env && split_env[0] == '0');
+#if BB_METAL_BACKEND
+        const bool split_default = !MetalLayer::FrameEnabled();
+#else
+        const bool split_default = true;
+#endif
+        const bool split = split_env && split_env[0] ? split_env[0] != '0' : split_default;
         for (u64 start = 0; start < pool_size; start += POOL_WINDOW_STEP) {
             const u64 size = split ? std::min(POOL_WINDOW_SIZE, pool_size - start) : pool_size;
             const std::string name = split && pool_size > POOL_WINDOW_STEP
