@@ -142,9 +142,28 @@ static void add_region(uint64_t phys, uint64_t size) {
 #define FLEX_SPAN (UINT64_C(384) * 1024 * 1024)
 #else
 #define BB_IOS_IDENTITY 0
-#define FLEX_SPAN (UINT64_C(1024) * 1024 * 1024)
+/* The span flexible mappings are placed in (first fit, so room past the game's 448 MiB keeps
+ * fragmentation from failing an allocation). BB_FLEX_SPAN_MB (448..1024, default 1024): run.sh's
+ * low-memory mode gives 512, as the iPhone runs with 384 (the game maps about 322 MiB). Its pages
+ * count against Metal's memory limit with the rest of the imported pool. */
+#define FLEX_SPAN_MAX (UINT64_C(1024) * 1024 * 1024)
+static uint64_t flex_span_bytes(void) {
+    static uint64_t size;
+    if (!size) {
+        const char *env=getenv("BB_FLEX_SPAN_MB");
+        uint64_t mb=env ? strtoull(env,NULL,10) : 1024;
+        if (mb<448 || mb>1024) mb=1024;
+        size=mb*1024*1024;
+    }
+    return size;
+}
+#define FLEX_SPAN flex_span_bytes()
 #endif
+#ifdef FLEX_SPAN_MAX
+static uint64_t flex_bitmap[FLEX_SPAN_MAX/PAGE/64];
+#else
 static uint64_t flex_bitmap[FLEX_SPAN/PAGE/64];
+#endif
 /* GPU hooks (bbgpu): notified outside the lock, in order, after each operation. */
 typedef void (*GpuRange)(uintptr_t address, uint64_t size);
 static GpuRange hook_map, hook_unmap, hook_invalidate;

@@ -154,6 +154,9 @@ fi
 if [[ ${BB_AUTO_RENDER_RES:-} == 1 ]]; then
     unset BB_RENDER_RES BB_OUTPUT_RES BB_AUTO_RENDER_RES
 fi
+if [[ ${BB_AUTO_DMEM:-} == 1 ]]; then
+    unset BB_DMEM_MB BB_FLEX_SPAN_MB BB_AUTO_DMEM
+fi
 # BB_RENDER_RES=WxH explicitly sets the game's render resolution (a patch at start).
 # Frame rate: BB_FPS=uncap (default; delta-time patch, vblank 480 Hz, frames shown at once),
 # 60/90 (fixed-timestep patches) or 30 (unpatched). BB_PATCHES adds patch names ("a;b").
@@ -204,9 +207,22 @@ elif [[ -n ${scaled_output:-} ]]; then
     if (( extra > 0 )); then
         dmem=$(( 5056 + (extra + (64 << 20) - 1) / (64 << 20) * 64 ))
         (( dmem >= 5376 )) || dmem=5376
-        export BB_DMEM_MB=${BB_DMEM_MB:-$dmem}
+        [[ -n ${BB_DMEM_MB:-} ]] || export BB_DMEM_MB=$dmem BB_AUTO_DMEM=1
     fi
     echo "Output ${scaled_output}: scene ${scaled_render}, direct memory ${BB_DMEM_MB:-default} MiB (live_resolution=1: live changes)"
+fi
+# Low-memory mode (BB_LOW_MEMORY=1; off by default): the iPhone's sizes. Metal counts the whole
+# imported pool against its memory limit (about two thirds of the Mac's memory), not only the pages
+# the game writes. The game allocates 4589 MiB of direct memory, all at start (Iosefka's Clinic,
+# 1080p), so 4608 MiB holds it; the flexible span drops from 1024 to 512 MiB (the game maps about
+# 322). Together 960 MiB less imported (Metal allocated 8233-8342 -> 7295-7469 MiB at 1080p, M3
+# Pro). Not the default yet: 3 of 4 runs with it had the GPU at 55-70 ms a frame instead of 16
+# (15-17 FPS), though the same sizes set by hand and a fourth run did not; that is not understood.
+# A scene above 1080p keeps the larger direct memory set above.
+if [[ ${BB_LOW_MEMORY:-} == 1 ]]; then
+    [[ -n ${BB_DMEM_MB:-} ]] || export BB_DMEM_MB=4608 BB_AUTO_DMEM=1
+    [[ -n ${BB_FLEX_SPAN_MB:-} ]] || export BB_FLEX_SPAN_MB=512 BB_AUTO_DMEM=1
+    echo "Memory: low-memory mode, direct memory ${BB_DMEM_MB} MiB, flexible span ${BB_FLEX_SPAN_MB} MiB"
 fi
 # The game's patches (patches/Bloodborne.xml, bbport.ini's choices, the player's patches/ and
 # patches.json) are built by the game at start (`--patches -`, src/runtime_patches.c) from these.
