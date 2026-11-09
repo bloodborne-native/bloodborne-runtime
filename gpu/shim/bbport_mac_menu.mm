@@ -4,7 +4,8 @@
 // SDL gives the app a menu bar with Hide (⌘H), Quit (⌘Q), Close (⌘W), Minimize (⌘M) and Full
 // Screen (⌃⌘F). A held key repeats, and once Command is down its repeats are Command shortcuts:
 // holding W to walk and touching ⌘ closed the game. The items stay in the menu bar, without
-// their shortcuts; the window's close button and the in-game Quit still close the game.
+// their shortcuts; the window's close button, the in-game Quit and the quit binding (Command+Q by
+// default, only on a new press: src/runtime_pad.c quit_key, app issue #20) close the game.
 
 #include <TargetConditionals.h>
 #if TARGET_OS_OSX

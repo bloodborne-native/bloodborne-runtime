@@ -284,20 +284,20 @@ static void report_guest_heap(void) {
  * key.<input>=<SDL key names> and pad.<input>=<SDL gamepad button names>, comma-separated,
  * replace an input's binding (empty: unbound). Inputs: the buttons (cross ... right, touchpad =
  * a left-side click, touchpad_right), and on the keyboard the sticks: move_* (left), look_*
- * (right). Gamepad names as SDL's: a b x y back start leftstick rightstick leftshoulder
- * rightshoulder dpup dpdown dpleft dpright touchpad misc1 paddle1-4, plus lefttrigger and
- * righttrigger. The keyboard works next to a gamepad (the Steam Deck always has one): its buttons
+ * (right), and quit (closes the game; keyboard only). Gamepad names as SDL's: a b x y back
+ * start leftstick rightstick leftshoulder rightshoulder dpup dpdown dpleft dpright touchpad
+ * misc1 paddle1-4, plus lefttrigger and righttrigger. The keyboard works next to a gamepad (the Steam Deck always has one): its buttons
  * add to the gamepad's, a held move/look key moves the stick all the way. */
 enum {
     IN_CROSS, IN_CIRCLE, IN_SQUARE, IN_TRIANGLE, IN_L1, IN_R1, IN_L2, IN_R2, IN_L3, IN_R3,
     IN_OPTIONS, IN_TOUCHPAD, IN_TOUCHPAD_RIGHT, IN_UP, IN_DOWN, IN_LEFT, IN_RIGHT,
     IN_MOVE_UP, IN_MOVE_DOWN, IN_MOVE_LEFT, IN_MOVE_RIGHT, IN_LOOK_UP, IN_LOOK_DOWN, IN_LOOK_LEFT,
-    IN_LOOK_RIGHT, IN_SPRINT, IN_DODGE, IN_WALK, IN_COUNT
+    IN_LOOK_RIGHT, IN_SPRINT, IN_DODGE, IN_WALK, IN_QUIT, IN_COUNT
 };
 static const char *const input_names[IN_COUNT]={
     "cross","circle","square","triangle","l1","r1","l2","r2","l3","r3","options","touchpad",
     "touchpad_right","up","down","left","right","move_up","move_down","move_left","move_right",
-    "look_up","look_down","look_left","look_right","sprint","dodge","walk",
+    "look_up","look_down","look_left","look_right","sprint","dodge","walk","quit",
 };
 static const uint32_t input_buttons[IN_COUNT]={
     BTN_CROSS,BTN_CIRCLE,BTN_SQUARE,BTN_TRIANGLE,BTN_L1,BTN_R1,BTN_L2,BTN_R2,BTN_L3,BTN_R3,
@@ -323,7 +323,8 @@ static void bind_defaults(void) {
     /* The header comment's layout. */
     enum { NONE=-1, SHIFT=SDL_SCANCODE_LSHIFT };
     static const struct { int input; int key; int mod; } keys[]={
-        {IN_DODGE,SDL_SCANCODE_SPACE,NONE}, {IN_SPRINT,SHIFT,NONE}, {IN_WALK,SDL_SCANCODE_LALT,NONE}, {IN_CROSS,SDL_SCANCODE_F,NONE},
+        {IN_DODGE,SDL_SCANCODE_SPACE,NONE}, {IN_SPRINT,SHIFT,NONE}, {IN_WALK,SDL_SCANCODE_LALT,NONE},
+        {IN_QUIT,SDL_SCANCODE_Q,SDL_SCANCODE_LGUI}, {IN_QUIT,SDL_SCANCODE_Q,SDL_SCANCODE_RGUI}, {IN_CROSS,SDL_SCANCODE_F,NONE},
         {IN_CROSS,SDL_SCANCODE_RETURN,NONE}, {IN_TRIANGLE,SDL_SCANCODE_Q,NONE},
         {IN_L1,SDL_SCANCODE_E,NONE}, {IN_SQUARE,SDL_SCANCODE_TAB,NONE}, {IN_SQUARE,SDL_SCANCODE_R,NONE},
         {IN_R3,SDL_SCANCODE_C,NONE}, {IN_L3,SDL_SCANCODE_LCTRL,NONE},
@@ -460,6 +461,24 @@ static int mouse_key_down(int code) {
  * tap) would never show in SDL_GetKeyboardState. A key-down event watch latches it until the
  * next read ends (apply_keyboard), so every tap counts for at least one sample. */
 static volatile uint8_t key_latch[SDL_SCANCODE_COUNT];
+/* The quit input (app issue #20; default Command+Q, either Command key): closes the game as the
+ * window's close button does. Only a new press of its key counts, with the modifier already
+ * held: holding a key and then touching Command sends repeats, which never quit (app issue #14,
+ * why the menu bar has no Command shortcuts: gpu/shim/bbport_mac_menu.mm). */
+static void quit_key(int code) {
+    if (!bindings_ready) return;
+    const bool *k=SDL_GetKeyboardState(NULL);
+    for (int i=0;i<bindings[IN_QUIT].key_count;++i) {
+        const int mod=bindings[IN_QUIT].mods[i];
+        if (bindings[IN_QUIT].keys[i]!=code) continue;
+        if (mod>=0 && !(mod<SDL_SCANCODE_COUNT ? k && k[mod] : mouse_key_down(mod))) continue;
+        printf("Controls: quit (%s)\n",SDL_GetScancodeName((SDL_Scancode)code));
+        SDL_Event quit={0};
+        quit.type=SDL_EVENT_QUIT;
+        SDL_PushEvent(&quit);
+        return;
+    }
+}
 static bool key_watch(void *userdata, SDL_Event *e) {
     (void)userdata;
     /* BB_KEY_TRACE=1: the key presses and focus changes SDL delivers (whether keys reach the game). */
@@ -471,8 +490,10 @@ static bool key_watch(void *userdata, SDL_Event *e) {
         else if (e->type==SDL_EVENT_WINDOW_FOCUS_GAINED || e->type==SDL_EVENT_WINDOW_FOCUS_LOST)
             printf("Keyboard: window focus %s\n",e->type==SDL_EVENT_WINDOW_FOCUS_GAINED ? "gained" : "lost");
     }
-    if (e->type==SDL_EVENT_KEY_DOWN && !e->key.repeat && (int)e->key.scancode<SDL_SCANCODE_COUNT)
+    if (e->type==SDL_EVENT_KEY_DOWN && !e->key.repeat && (int)e->key.scancode<SDL_SCANCODE_COUNT) {
         key_latch[e->key.scancode]=1;
+        quit_key(e->key.scancode);
+    }
     return true;
 }
 static void key_watch_start(void) {
