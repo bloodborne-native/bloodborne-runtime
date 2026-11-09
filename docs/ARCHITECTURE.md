@@ -92,7 +92,8 @@ game data is stored. `BB_BUTTON_PROMPTS=0`: the game's icons always.
 
 **Memory.** Direct memory is 5,056 MiB as on the PS4. Outputs above 1080p need more for their
 larger targets: `run.sh` sets `BB_DMEM_MB` to 5,056 MiB plus 448 bytes per scene pixel above
-1080p, in 64 MiB steps. `BB_DMEM_EXTRA_MB` (512 by default) adds memory past the game's size that
+1080p, in 64 MiB steps, and never less than 5,376 MiB (a scene above 1080p also gets the larger
+graphics heaps; 1920×1200 stopped at start with 5,184). `BB_DMEM_EXTRA_MB` (512 by default) adds memory past the game's size that
 only the runtime hands out (Laurence's render cache, below). Direct and flexible memory live in
 one shared-memory pool that the GPU uses in place.
 

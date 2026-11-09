@@ -640,7 +640,9 @@ void MemoryEstimate() {
     }
     const double pixels = double(w) * double(h);
     const double extra = patched ? std::max(0.0, (pixels - 1920.0 * 1080.0) * 448.0) : 0.0;
-    const double game = 5056.0 + std::ceil(extra / double(64 << 20)) * 64.0 + 1024.0;
+    // run.sh: at least 5376 MiB for any scene above 1080p (the larger graphics heaps).
+    const double dmem = extra > 0 ? std::max(5376.0, 5056.0 + std::ceil(extra / double(64 << 20)) * 64.0) : 5056.0;
+    const double game = dmem + 1024.0;
     const double used = game + 1000.0 + 360.0 * pixels / 1e6; // MiB
     static const int total = SDL_GetSystemRAM();               // MiB
     const bool high = total > 0 && used > total * 0.75;

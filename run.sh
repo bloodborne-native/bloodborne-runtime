@@ -196,10 +196,15 @@ elif [[ -n ${scaled_output:-} ]]; then
     # above 1080p, in 64 MiB steps, over the PS4's 5056 MiB. A 2258x1270 scene (4K output,
     # Balanced) failed at 5184 MiB and ran at 5376; 1506x848 (1440p, Balanced) ran at 5056. The
     # 9152 MiB used before for every output above 1080p lost the device at 1440p on an 18 GB Mac.
+    # A scene above 1080p also gets the larger graphics heaps (runtime_patches.c), so it never
+    # gets less than 5376 MiB: a 1920x1200 scene (16:10) stopped at start with 5184 (a null read
+    # on the main thread, exit code 139) and ran with 5376.
     scene_w=${scaled_render%x*} scene_h=${scaled_render#*x}
     extra=$(( (scene_w * scene_h - 1920 * 1080) * 448 ))
     if (( extra > 0 )); then
-        export BB_DMEM_MB=${BB_DMEM_MB:-$(( 5056 + (extra + (64 << 20) - 1) / (64 << 20) * 64 ))}
+        dmem=$(( 5056 + (extra + (64 << 20) - 1) / (64 << 20) * 64 ))
+        (( dmem >= 5376 )) || dmem=5376
+        export BB_DMEM_MB=${BB_DMEM_MB:-$dmem}
     fi
     echo "Output ${scaled_output}: scene ${scaled_render}, direct memory ${BB_DMEM_MB:-default} MiB (live_resolution=1: live changes)"
 fi
