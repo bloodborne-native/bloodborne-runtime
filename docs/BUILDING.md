@@ -72,6 +72,7 @@ BB_GAME_DIR=/path/to/your/game bash run.sh
 | `BB_GAME_DIR` | The game folder |
 | `BB_OUTPUT_RES=WxH`, `BB_RENDER_RES=WxH` | Output size, and the game's render size (with `BB_RENDER_RES`, also set `BB_DMEM_MB`) |
 | `BB_LOW_MEMORY=1` | Low-memory mode (off by default): 4,608 MiB of direct memory and a 512 MiB flexible span, 960 MiB less counted against Metal's memory limit; for scenes up to 1080p |
+| `BB_POOL_REACH=1` | Logs how much of the game's memory pool the GPU has reached (2 MiB and 64 MiB pieces), at each new 64 MiB piece |
 | `BB_FLEX_SPAN_MB` | The span flexible memory is placed in, 448–1,024 MiB (default 1,024) |
 | `BB_UPSCALER=off\|fsr3\|fsr4\|fsr411\|taa\|dlss\|metalfx`, `BB_UPSCALE_PRESET` | Upscaler (off by default; an unknown value is off) and preset. The Metal renderer turns `fsr3`, `fsr4`, `fsr411` and `dlss` into `metalfx`; an FSR 4 the GPU cannot run falls back to `fsr3`, an unavailable DLSS to FSR 3.1 or MetalFX |
 | `BB_FSR411_DIR` | AMD's FSR 4.1.1 files: the Vulkan path's set, or on macOS (MoltenVK) `initializers.bin` and `initializers-ultraperformance.bin` (`tools/fsr4_metal_initializers.sh <the player's amd_fidelityfx_upscaler_dx12.dll>`) |

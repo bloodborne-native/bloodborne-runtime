@@ -146,7 +146,11 @@ the game's data where it is. On MoltenVK it is split into two overlapping window
 (`BufferCache::pool_upper`). Native Metal reads past 4 GiB correctly and wraps the whole pool as
 one buffer (`newBufferWithBytesNoCopy`), so the windows' overlap no longer counts against Metal's
 memory limit (`BB_POOL_SPLIT=0/1` forces one buffer or the windows); the other buffers and the
-images it makes directly in Metal. GPU
+images it makes directly in Metal. Any GPU use of a no-copy buffer pins its whole length in physical memory,
+written or not (measured: a 4 GiB buffer the CPU had written 64 MiB of pinned 4.1 GiB, with or
+without a residency set), so the whole imported pool is pinned. In Iosefka's Clinic the GPU
+reaches about 1.35 GiB of the 6.4 GiB pool in 2 MiB pieces (2.6 GiB in 64 MiB pieces;
+`BB_POOL_REACH=1` logs it), which is what importing only the reached pieces would pin. GPU
 objects stay in a Metal residency set (`gpu/shim/bbport_metal_residency.*`); removed ones are
 kept until the GPU has finished every submission that could use them.
 

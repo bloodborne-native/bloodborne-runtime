@@ -3658,12 +3658,50 @@ void BufferCache::Preupload(u64 budget) {
         std::memory_order_relaxed);
 }
 
+// bbport BB_POOL_REACH=1 (diagnostic): how much of the pool the GPU has reached, in 2 MiB and
+// 64 MiB pieces. Any GPU use of a no-copy Metal buffer pins its whole length in physical memory
+// (measured: a 4 GiB buffer the CPU had written 64 MiB of pinned 4.1 GiB), so this is what an
+// import of only the reached pieces would pin.
+static void NotePoolReach(u64 phys, u64 size) {
+    static const bool on = [] {
+        const char* env = std::getenv("BB_POOL_REACH");
+        return env && env[0] == '1';
+    }();
+    if (!on) {
+        return;
+    }
+    static std::array<std::atomic<u64>, 128> small{}; // 2 MiB pieces of up to 16 GiB
+    static std::array<std::atomic<u64>, 4> large{};   // 64 MiB pieces
+    static std::atomic<u64> small_count{0}, large_count{0};
+    bool new_large = false;
+    for (u64 c = phys >> 21; c <= (phys + size - 1) >> 21 && c < 128 * 64; ++c) {
+        const u64 bit = u64{1} << (c % 64);
+        if (!(small[c / 64].fetch_or(bit, std::memory_order_relaxed) & bit)) {
+            small_count.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    for (u64 c = phys >> 26; c <= (phys + size - 1) >> 26 && c < 4 * 64; ++c) {
+        const u64 bit = u64{1} << (c % 64);
+        if (!(large[c / 64].fetch_or(bit, std::memory_order_relaxed) & bit)) {
+            large_count.fetch_add(1, std::memory_order_relaxed);
+            new_large = true;
+        }
+    }
+    if (new_large) {
+        std::printf("Pool reach: %llu MiB in 2 MiB pieces, %llu MiB in 64 MiB pieces (new piece at %llu MiB)\n",
+                    static_cast<unsigned long long>(small_count.load() * 2),
+                    static_cast<unsigned long long>(large_count.load() * 64),
+                    static_cast<unsigned long long>((phys >> 26) * 64));
+    }
+}
+
 std::optional<std::pair<const Buffer*, u64>> BufferCache::UnifiedRange(VAddr addr, u64 size) {
     u64 phys = 0;
     uintptr_t end = 0;
     if (size == 0 || !runtime_memory_pool_phys(addr, &phys, &end) || addr + size > end) {
         return std::nullopt;
     }
+    NotePoolReach(phys, size);
     UnifiedPageTable(addr, size);
     const size_t window = PoolWindow(phys);
     const u64 start = window * POOL_WINDOW_STEP;
