@@ -607,7 +607,31 @@ BufferCache::BufferCache(Backend::Device& device_, const Vulkan::Instance& insta
         const bool split_default = true;
 #endif
         const bool split = split_env && split_env[0] ? split_env[0] != '0' : split_default;
-        for (u64 start = 0; start < pool_size; start += POOL_WINDOW_STEP) {
+        // Metal: in pieces on first use (PoolPieces), unless BB_POOL_PIECE_MB=0 or a split is
+        // forced. Measured on the M3 Pro, Iosefka's Clinic, 1080p: the whole import pinned 9324
+        // MiB, 16 MiB pieces 3877 MiB, with the same picture and frame rate (50.2 against 48.4
+        // FPS standing, 57.9 walking). Smaller pieces mean more buffers, and the GPU slows down
+        // with several hundred of them: 4 MiB pieces (about 700 buffers after a walk) fell to
+        // 8-15 FPS with 44-135 ms of GPU time a frame.
+        u64 piece_mb = 0;
+#if BB_METAL_BACKEND
+        if (MetalLayer::FrameEnabled() && !split) {
+            const char* piece_env = std::getenv("BB_POOL_PIECE_MB");
+            piece_mb = piece_env && piece_env[0] ? std::strtoull(piece_env, nullptr, 10) : 16;
+            piece_mb = piece_mb == 0 ? 0 : std::bit_ceil(std::clamp<u64>(piece_mb, 1, 1024));
+        }
+#endif
+        if (piece_mb) {
+            pool_pieces.base = static_cast<u8*>(pool);
+            pool_pieces.size = pool_size;
+            pool_pieces.piece = piece_mb << 20;
+            pool_pieces.pieces.resize((pool_size + pool_pieces.piece - 1) / pool_pieces.piece);
+            std::printf("Guest memory: the pool (%llu MiB) imported in %llu MiB pieces as the GPU "
+                        "reaches them (BB_POOL_PIECE_MB=0: one import)\n",
+                        static_cast<unsigned long long>(pool_size >> 20),
+                        static_cast<unsigned long long>(piece_mb));
+        }
+        for (u64 start = 0; start < pool_size && !piece_mb; start += POOL_WINDOW_STEP) {
             const u64 size = split ? std::min(POOL_WINDOW_SIZE, pool_size - start) : pool_size;
             const std::string name = split && pool_size > POOL_WINDOW_STEP
                                          ? "Guest memory pool " + std::to_string(pool_windows.size() + 1)
@@ -628,9 +652,11 @@ BufferCache::BufferCache(Backend::Device& device_, const Vulkan::Instance& insta
         if (GuestInPlace()) {
             DisableGuestInPlace(); // the same idea, through sparse arenas
         }
-        std::printf("Guest memory: no sparse buffers; the GPU uses the game's memory in place "
-                    "(%llu MiB imported)\n",
-                    static_cast<unsigned long long>(pool_size >> 20));
+        if (!piece_mb) {
+            std::printf("Guest memory: no sparse buffers; the GPU uses the game's memory in place "
+                        "(%llu MiB imported)\n",
+                        static_cast<unsigned long long>(pool_size >> 20));
+        }
     }
     // bbport: the PC memory model needs the game's direct memory in dma-buf chunks the runtime can
     // map at any offset (BbGuestMemory::Usable), and an AMD GPU for now (PcModelGpu). Without
@@ -3703,6 +3729,11 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::UnifiedRange(VAddr add
     }
     NotePoolReach(phys, size);
     UnifiedPageTable(addr, size);
+    if (pool_pieces.piece) {
+        const auto [buffer, start] =
+            PoolPiece(phys / pool_pieces.piece, (phys + size - 1) / pool_pieces.piece);
+        return std::pair<const Buffer*, u64>{buffer, phys - start};
+    }
     const size_t window = PoolWindow(phys);
     const u64 start = window * POOL_WINDOW_STEP;
     const Buffer* buffer = pool_windows[window].get();
@@ -3716,6 +3747,32 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::UnifiedRange(VAddr add
         return std::nullopt;
     }
     return std::pair<const Buffer*, u64>{buffer, phys - start};
+}
+
+std::pair<const Buffer*, u64> BufferCache::PoolPiece(u64 first, u64 last) {
+    auto& p = pool_pieces;
+    std::scoped_lock lock{p.mutex};
+    const u64 start = first * p.piece;
+    const u64 length = std::min((last + 1) * p.piece, p.size) - start;
+    std::unique_ptr<Buffer>* slot;
+    if (first == last) {
+        slot = &p.pieces[first];
+    } else {
+        slot = &p.spans[{first, last}];
+    }
+    if (!*slot) {
+        *slot = std::make_unique<Buffer>(device, p.base + start, length,
+                                         first == last ? "Guest memory piece" : "Guest memory span");
+        (first == last ? p.imported : p.spanned) += length;
+        if (p.imported + p.spanned >= p.reported + (256ull << 20)) {
+            p.reported = p.imported + p.spanned;
+            std::printf("Guest memory: %llu MiB of the pool imported in pieces, %llu MiB in %zu "
+                        "spans across pieces\n",
+                        static_cast<unsigned long long>(p.imported >> 20),
+                        static_cast<unsigned long long>(p.spanned >> 20), p.spans.size());
+        }
+    }
+    return {slot->get(), start};
 }
 
 void BufferCache::UnifiedPageTable(VAddr addr, u64 size) {
@@ -3735,6 +3792,15 @@ void BufferCache::UnifiedPageTable(VAddr addr, u64 size) {
                 // The window of the block's first byte holds the whole block.
                 const u64 into_block = at - (block << block_shift);
                 const u64 base = phys >= into_block ? phys - into_block : 0;
+                if (pool_pieces.piece) {
+                    // The whole block in one buffer: a span when it crosses a piece boundary.
+                    const u64 block_end = std::min(base + (u64{1} << block_shift), pool_pieces.size);
+                    const auto [buffer, start] = PoolPiece(base / pool_pieces.piece,
+                                                           (block_end - 1) / pool_pieces.piece);
+                    entries.emplace_back(block, buffer->BufferDeviceAddress() + phys - into_block -
+                                                    start);
+                    continue;
+                }
                 const size_t window = PoolWindow(base);
                 entries.emplace_back(block, pool_windows[window]->BufferDeviceAddress() + phys -
                                                 into_block - window * POOL_WINDOW_STEP);
