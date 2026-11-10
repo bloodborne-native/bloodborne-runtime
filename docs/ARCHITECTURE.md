@@ -150,11 +150,11 @@ images it makes directly in Metal. Any GPU use of a no-copy buffer pins its whol
 written or not (measured: a 4 GiB buffer the CPU had written 64 MiB of pinned 4.1 GiB, with or
 without a residency set), so the whole imported pool is pinned. In Iosefka's Clinic the GPU
 reaches about 1.35 GiB of the 6.4 GiB pool in 2 MiB pieces (2.6 GiB in 64 MiB pieces;
-`BB_POOL_REACH=1` logs it). `BB_POOL_PIECE_MB=16` imports the pool in pieces the first time the
-GPU reaches them instead (`BufferCache::PoolPiece`; a range across pieces gets a buffer over
-exactly those pieces): pinned memory in the clinic falls from 8,416 to 3,061–4,048 MiB with the
-same picture, but the GPU takes about 6 ms more a frame where the test walk ends (53 against 77
-FPS), so it is off by default until that cost is understood. GPU
+`BB_POOL_REACH=1` logs it). So Metal imports the pool in 16 MiB pieces the first time the GPU
+reaches them (`BufferCache::PoolPiece`; `BB_POOL_PIECE_MB`, 0: one import), and a range across
+pieces gets a buffer over exactly those pieces: pinned memory in the clinic falls from 8,416 to
+3,061–4,048 MiB with the same picture and GPU time. Those spans count again memory their pieces
+hold, about 2 GiB of Metal's total. GPU
 objects stay in a Metal residency set (`gpu/shim/bbport_metal_residency.*`); removed ones are
 kept until the GPU has finished every submission that could use them.
 
