@@ -607,17 +607,16 @@ BufferCache::BufferCache(Backend::Device& device_, const Vulkan::Instance& insta
         const bool split_default = true;
 #endif
         const bool split = split_env && split_env[0] ? split_env[0] != '0' : split_default;
-        // Metal: in pieces on first use (PoolPieces), unless BB_POOL_PIECE_MB=0 or a split is
-        // forced. Measured on the M3 Pro, Iosefka's Clinic, 1080p: the whole import pinned 9324
-        // MiB, 16 MiB pieces 3877 MiB, with the same picture and frame rate (50.2 against 48.4
-        // FPS standing, 57.9 walking). Smaller pieces mean more buffers, and the GPU slows down
-        // with several hundred of them: 4 MiB pieces (about 700 buffers after a walk) fell to
-        // 8-15 FPS with 44-135 ms of GPU time a frame.
+        // Metal, BB_POOL_PIECE_MB=N (off by default): in pieces on first use (PoolPieces).
+        // Measured on the M3 Pro, Iosefka's Clinic, 1080p, interleaved walking runs on a quiet
+        // Mac: the whole import pinned 8416 MiB, 4 and 16 MiB pieces 3061-4048 MiB with the same
+        // picture, but where the walk ends the GPU took 15.3-15.8 ms a frame with pieces against
+        // 9.2 ms with the whole import (53 against 77 FPS). Off until that cost is understood.
         u64 piece_mb = 0;
 #if BB_METAL_BACKEND
         if (MetalLayer::FrameEnabled() && !split) {
             const char* piece_env = std::getenv("BB_POOL_PIECE_MB");
-            piece_mb = piece_env && piece_env[0] ? std::strtoull(piece_env, nullptr, 10) : 16;
+            piece_mb = piece_env && piece_env[0] ? std::strtoull(piece_env, nullptr, 10) : 0;
             piece_mb = piece_mb == 0 ? 0 : std::bit_ceil(std::clamp<u64>(piece_mb, 1, 1024));
         }
 #endif
