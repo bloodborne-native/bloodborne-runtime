@@ -393,22 +393,32 @@ private:
     size_t PoolWindow(u64 phys) const {
         return std::min<size_t>(phys / POOL_WINDOW_STEP, pool_windows.size() - 1);
     }
-    /// Metal: the pool imported in pieces on first use instead of whole (BB_POOL_PIECE_MB, 0: one
-    /// import). Any GPU use of a no-copy buffer pins its whole length, so only pieces the GPU has
-    /// reached are pinned. A range across pieces gets a buffer over exactly those pieces (a span):
-    /// separate buffers are not contiguous in GPU addresses. Pieces and spans live for the process.
+    /// Metal: the pool imported on first use instead of whole (BB_POOL_PIECE_MB, 0: one import).
+    /// Any GPU use of a no-copy buffer pins its whole length, so only what the GPU has reached is
+    /// pinned. Regions are whole pieces and never overlap: a range across regions gets one region
+    /// over all of them (separate buffers are not contiguous in GPU addresses), and the ones it
+    /// replaces are freed once the GPU is past them, their page table entries rewritten first.
+    struct PoolRegion {
+        u64 end = 0;
+        std::unique_ptr<Buffer> buffer;
+    };
     struct PoolPieces {
         u8* base = nullptr;
         u64 size = 0;
         u64 piece = 0; ///< bytes per piece; 0: not in pieces
-        std::vector<std::unique_ptr<Buffer>> pieces;
-        std::map<std::pair<u64, u64>, std::unique_ptr<Buffer>> spans;
-        u64 imported = 0, spanned = 0, reported = 0;
-        std::mutex mutex;
+        std::map<u64, PoolRegion> regions;                       ///< by start offset
+        std::vector<std::pair<std::unique_ptr<Buffer>, u64>> retired; ///< with the tick to pass
+        std::unordered_map<u64, u64> block_base; ///< page table block -> pool offset it maps
+        u64 imported = 0, reported = 0, merges = 0, released = 0;
+        std::recursive_mutex mutex;
     } pool_pieces;
-    /// The buffer holding pool pieces [first, last] whole (made on first use), and the pool offset
-    /// it starts at.
+    /// The region holding pool pieces [first, last] whole (made or merged on first use), and the
+    /// pool offset it starts at.
     std::pair<const Buffer*, u64> PoolPiece(u64 first, u64 last);
+    /// The region holding pool offset `phys` (it must exist), and its start.
+    std::pair<const Buffer*, u64> PoolRegionAt(u64 phys);
+    /// Frees replaced regions the GPU is done with.
+    void ReleasePoolRegions();
     IntervalList<> unified_table_blocks; ///< blocks whose page table entries point into the pool
     /// bbport BB_LAYER_MEMORY (statistics): a binding not whole in one chunk.
     void NoteLayerMiss(VAddr address, u64 size, bool is_written);

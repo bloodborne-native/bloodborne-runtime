@@ -607,11 +607,12 @@ BufferCache::BufferCache(Backend::Device& device_, const Vulkan::Instance& insta
         const bool split_default = true;
 #endif
         const bool split = split_env && split_env[0] ? split_env[0] != '0' : split_default;
-        // Metal: in pieces on first use (PoolPieces), unless BB_POOL_PIECE_MB=0 or a split is
-        // forced. Measured on the M3 Pro, Iosefka's Clinic, 1080p, on a quiet Mac: the whole
-        // import pinned 8416 MiB, 4 and 16 MiB pieces 3061-4048 MiB, with the same picture and
-        // GPU time (Metal System Traces where a walk ends: 52.4 FPS with 16 MiB pieces, 53.0
-        // whole; fragment, vertex and compute time within 5%). 16 MiB keeps the buffers few.
+        // Metal: in pieces on first use, merged into regions (PoolPieces), unless
+        // BB_POOL_PIECE_MB=0 or a split is forced. Measured on the M3 Pro, Iosefka's Clinic,
+        // 1080p, walking on a quiet Mac: the whole import pinned 8416 MiB with 8358 MiB counted
+        // by Metal; 16 MiB regions pin 3561-4284 MiB and Metal counts 3586-3712, at the same
+        // frame rate (56.3-57.1 FPS) and picture. Traces where a walk ends gave the same GPU
+        // time for pieces and the whole pool (52.4 against 53.0 FPS).
         u64 piece_mb = 0;
 #if BB_METAL_BACKEND
         if (MetalLayer::FrameEnabled() && !split) {
@@ -624,7 +625,6 @@ BufferCache::BufferCache(Backend::Device& device_, const Vulkan::Instance& insta
             pool_pieces.base = static_cast<u8*>(pool);
             pool_pieces.size = pool_size;
             pool_pieces.piece = piece_mb << 20;
-            pool_pieces.pieces.resize((pool_size + pool_pieces.piece - 1) / pool_pieces.piece);
             std::printf("Guest memory: the pool (%llu MiB) imported in %llu MiB pieces as the GPU "
                         "reaches them (BB_POOL_PIECE_MB=0: one import)\n",
                         static_cast<unsigned long long>(pool_size >> 20),
@@ -3048,6 +3048,7 @@ void BufferCache::QueuePromotions(u64 submitted) {
             return (device.CompletedTick() >= (retired.second));
         });
     }
+    ReleasePoolRegions();
     ReportInPlaceBlocks();
     if (promote_candidates.Empty()) {
         return;
@@ -3751,27 +3752,91 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::UnifiedRange(VAddr add
 std::pair<const Buffer*, u64> BufferCache::PoolPiece(u64 first, u64 last) {
     auto& p = pool_pieces;
     std::scoped_lock lock{p.mutex};
-    const u64 start = first * p.piece;
-    const u64 length = std::min((last + 1) * p.piece, p.size) - start;
-    std::unique_ptr<Buffer>* slot;
-    if (first == last) {
-        slot = &p.pieces[first];
-    } else {
-        slot = &p.spans[{first, last}];
-    }
-    if (!*slot) {
-        *slot = std::make_unique<Buffer>(device, p.base + start, length,
-                                         first == last ? "Guest memory piece" : "Guest memory span");
-        (first == last ? p.imported : p.spanned) += length;
-        if (p.imported + p.spanned >= p.reported + (256ull << 20)) {
-            p.reported = p.imported + p.spanned;
-            std::printf("Guest memory: %llu MiB of the pool imported in pieces, %llu MiB in %zu "
-                        "spans across pieces\n",
-                        static_cast<unsigned long long>(p.imported >> 20),
-                        static_cast<unsigned long long>(p.spanned >> 20), p.spans.size());
+    u64 start = first * p.piece;
+    u64 end = std::min((last + 1) * p.piece, p.size);
+    // The region starting at or before `start`: it holds the range, or the range starts after it.
+    auto it = p.regions.upper_bound(start);
+    if (it != p.regions.begin()) {
+        const auto prev = std::prev(it);
+        if (prev->second.end >= end) {
+            return {prev->second.buffer.get(), prev->first};
+        }
+        if (prev->second.end > start) {
+            it = prev;
         }
     }
-    return {slot->get(), start};
+    // Every region overlapping [start, end) is replaced by one over all of them.
+    std::vector<std::map<u64, PoolRegion>::iterator> replaced;
+    for (; it != p.regions.end() && it->first < end; ++it) {
+        start = std::min(start, it->first);
+        end = std::max(end, it->second.end);
+        replaced.push_back(it);
+    }
+    auto buffer = std::make_unique<Buffer>(device, p.base + start, end - start,
+                                           "Guest memory region");
+    const u64 address = buffer->BufferDeviceAddress();
+    u64 replaced_bytes = 0;
+    for (const auto& old : replaced) {
+        replaced_bytes += old->second.end - old->first;
+        p.retired.emplace_back(std::move(old->second.buffer), device.CurrentTick());
+        p.regions.erase(old);
+    }
+    const Buffer* result = buffer.get();
+    p.regions.emplace(start, PoolRegion{end, std::move(buffer)});
+    p.imported += (end - start) - replaced_bytes;
+    if (!replaced.empty()) {
+        ++p.merges;
+        // Page table entries into the replaced regions point at the new one; the old buffers
+        // stay alive until the GPU is past the commands recorded so far (ReleasePoolRegions).
+        auto* table = reinterpret_cast<u64*>(bda_pagetable_buffer->mapped_data.data());
+        u64 low = UINT64_MAX, high = 0;
+        for (const auto& [block, base] : p.block_base) {
+            if (base >= start && base < end) {
+                table[block] = address + base - start;
+                low = std::min(low, block);
+                high = std::max(high, block);
+            }
+        }
+        if (low <= high) {
+            bda_pagetable_buffer->Flush(low * sizeof(u64), (high - low + 1) * sizeof(u64));
+        }
+    }
+    if (p.imported >= p.reported + (256ull << 20)) {
+        p.reported = p.imported;
+        u64 waiting = 0;
+        for (const auto& retired : p.retired) {
+            waiting += retired.first->SizeBytes();
+        }
+        std::printf("Guest memory: %llu MiB of the pool imported in %zu regions (%llu merges; "
+                    "replaced regions: %llu MiB freed, %llu MiB waiting for the GPU)\n",
+                    static_cast<unsigned long long>(p.imported >> 20), p.regions.size(),
+                    static_cast<unsigned long long>(p.merges),
+                    static_cast<unsigned long long>(p.released >> 20),
+                    static_cast<unsigned long long>(waiting >> 20));
+    }
+    return {result, start};
+}
+
+std::pair<const Buffer*, u64> BufferCache::PoolRegionAt(u64 phys) {
+    auto& p = pool_pieces;
+    std::scoped_lock lock{p.mutex};
+    const auto it = std::prev(p.regions.upper_bound(phys));
+    return {it->second.buffer.get(), it->first};
+}
+
+void BufferCache::ReleasePoolRegions() {
+    auto& p = pool_pieces;
+    if (!p.piece) {
+        return;
+    }
+    std::scoped_lock lock{p.mutex};
+    std::erase_if(p.retired, [&](const auto& retired) {
+        if (device.CompletedTick() < retired.second) {
+            return false;
+        }
+        p.released += retired.first->SizeBytes();
+        return true;
+    });
 }
 
 void BufferCache::UnifiedPageTable(VAddr addr, u64 size) {
@@ -3792,12 +3857,11 @@ void BufferCache::UnifiedPageTable(VAddr addr, u64 size) {
                 const u64 into_block = at - (block << block_shift);
                 const u64 base = phys >= into_block ? phys - into_block : 0;
                 if (pool_pieces.piece) {
-                    // The whole block in one buffer: a span when it crosses a piece boundary.
+                    // The whole block in one region. Its address is taken when the table is
+                    // written: a later block in this loop may merge this block's region away.
                     const u64 block_end = std::min(base + (u64{1} << block_shift), pool_pieces.size);
-                    const auto [buffer, start] = PoolPiece(base / pool_pieces.piece,
-                                                           (block_end - 1) / pool_pieces.piece);
-                    entries.emplace_back(block, buffer->BufferDeviceAddress() + phys - into_block -
-                                                    start);
+                    PoolPiece(base / pool_pieces.piece, (block_end - 1) / pool_pieces.piece);
+                    entries.emplace_back(block, base);
                     continue;
                 }
                 const size_t window = PoolWindow(base);
@@ -3812,6 +3876,14 @@ void BufferCache::UnifiedPageTable(VAddr addr, u64 size) {
     // Written in place (host-visible table): read by commands recorded after this, submitted
     // after these host writes.
     auto* table = reinterpret_cast<u64*>(bda_pagetable_buffer->mapped_data.data());
+    if (pool_pieces.piece) {
+        std::scoped_lock lock{pool_pieces.mutex};
+        for (auto& [block, base] : entries) {
+            pool_pieces.block_base[block] = base;
+            const auto [buffer, start] = PoolRegionAt(base);
+            base = buffer->BufferDeviceAddress() + base - start;
+        }
+    }
     for (const auto& [block, address] : entries) {
         table[block] = address;
         unified_table_blocks.Add({block, block + 1});
@@ -3834,6 +3906,13 @@ void BufferCache::ProcessUnifiedUnmaps() {
     for (const auto& [addr, size] : unmaps) {
         const u64 first = addr >> block_shift, last = (addr + size - 1) >> block_shift;
         unified_table_blocks.Subtract(first, last + 1);
+        if (pool_pieces.piece) {
+            // A later region merge must not point these entries into the pool again.
+            std::scoped_lock lock{pool_pieces.mutex};
+            for (u64 block = first; block <= last; ++block) {
+                pool_pieces.block_base.erase(block);
+            }
+        }
         std::memset(bda_pagetable_buffer->mapped_data.data() + first * sizeof(u64), 0,
                     (last - first + 1) * sizeof(u64));
         bda_pagetable_buffer->Flush(first * sizeof(u64),

@@ -1153,9 +1153,29 @@ u64 BufferAddress(VkBuffer buffer) {
 }
 
 void BufferGone(VkBuffer buffer) {
-    std::unique_lock lock{registered_mutex};
-    if (registered.erase(buffer)) {
-        registered_generation.fetch_add(1, std::memory_order_release);
+    id<MTLBuffer> gone = nil;
+    {
+        std::unique_lock lock{registered_mutex};
+        if (const auto it = registered.find(buffer); it != registered.end()) {
+            gone = it->second.buffer;
+            registered.erase(it);
+            registered_generation.fetch_add(1, std::memory_order_release);
+        }
+    }
+    // A buffer reached by GPU address stays in these lists and in the residency set, which hold
+    // it: without this a destroyed buffer was kept alive, resident and counted by Metal for the
+    // rest of the process (the pool's regions, replaced as they merge, added 1.5-2 GB to
+    // currentAllocatedSize). It is destroyed once the GPU is past every use (callers' rule).
+    if (gone) {
+        std::scoped_lock lock{maps_mutex};
+        if (std::erase(address_buffers, gone)) {
+            std::erase(declared_buffers, gone);
+            if (residency) {
+                [residency removeAllocation:gone];
+                [residency commit];
+            }
+            ++address_generation;
+        }
     }
 }
 

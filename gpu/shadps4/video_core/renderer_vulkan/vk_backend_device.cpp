@@ -202,8 +202,8 @@ Backend::BufferAllocation BackendDevice::ImportHostMemory(void* host, u64 size,
         buffer.buffer = vk::Buffer{static_cast<VkBuffer>(MetalLayer::MetalOnlyBuffer(metal.object))};
         buffer.bda_addr = MetalLayer::MetalOnlyBufferAddress(static_cast<VkBuffer>(buffer.buffer));
         BbMetalResidency::AddMetalBuffer(static_cast<VkBuffer>(buffer.buffer), metal.object);
-        // Pool pieces and spans (BufferCache::PoolPiece) are counted there instead.
-        if (!name.starts_with("Guest memory piece") && !name.starts_with("Guest memory span")) {
+        // Pool regions (BufferCache::PoolPiece) are counted there instead.
+        if (!name.starts_with("Guest memory region")) {
             std::printf("GPU: %s (%llu MiB) used in place by Metal, kept resident\n",
                         std::string{name}.c_str(), static_cast<unsigned long long>(size >> 20));
         }
