@@ -401,6 +401,7 @@ private:
     struct PoolRegion {
         u64 end = 0;
         std::unique_ptr<Buffer> buffer;
+        u64 last_tick = 0; ///< the submission it was last handed out in
     };
     struct PoolPieces {
         u8* base = nullptr;
@@ -410,6 +411,9 @@ private:
         std::vector<std::pair<std::unique_ptr<Buffer>, u64>> retired; ///< with the tick to pass
         std::unordered_map<u64, u64> block_base; ///< page table block -> pool offset it maps
         u64 imported = 0, reported = 0, merges = 0, released = 0;
+        /// Regions past this many bytes are freed, the least recently used first, once the GPU is
+        /// done with them (BB_POOL_BUDGET_MB, 2048 by default; 0: none).
+        u64 budget = 0, evicted = 0, evictions = 0, evict_reported = 0, evict_checked = 0;
         std::recursive_mutex mutex;
     } pool_pieces;
     /// The region holding pool pieces [first, last] whole (made or merged on first use), and the
@@ -419,6 +423,9 @@ private:
     std::pair<const Buffer*, u64> PoolRegionAt(u64 phys);
     /// Frees replaced regions the GPU is done with.
     void ReleasePoolRegions();
+    /// Over the budget: frees the least recently used regions the GPU is done with, their page
+    /// table entries cleared first (the command thread, as UnifiedPageTable).
+    void EvictPoolRegions();
     IntervalList<> unified_table_blocks; ///< blocks whose page table entries point into the pool
     /// bbport BB_LAYER_MEMORY (statistics): a binding not whole in one chunk.
     void NoteLayerMiss(VAddr address, u64 size, bool is_written);

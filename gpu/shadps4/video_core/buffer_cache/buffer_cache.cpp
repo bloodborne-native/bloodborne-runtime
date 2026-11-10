@@ -625,10 +625,14 @@ BufferCache::BufferCache(Backend::Device& device_, const Vulkan::Instance& insta
             pool_pieces.base = static_cast<u8*>(pool);
             pool_pieces.size = pool_size;
             pool_pieces.piece = piece_mb << 20;
+            const char* budget_env = std::getenv("BB_POOL_BUDGET_MB");
+            pool_pieces.budget =
+                (budget_env && budget_env[0] ? std::strtoull(budget_env, nullptr, 10) : 2048) << 20;
             std::printf("Guest memory: the pool (%llu MiB) imported in %llu MiB pieces as the GPU "
-                        "reaches them (BB_POOL_PIECE_MB=0: one import)\n",
+                        "reaches them, at most %llu MiB kept (BB_POOL_PIECE_MB=0: one import)\n",
                         static_cast<unsigned long long>(pool_size >> 20),
-                        static_cast<unsigned long long>(piece_mb));
+                        static_cast<unsigned long long>(piece_mb),
+                        static_cast<unsigned long long>(pool_pieces.budget >> 20));
         }
         for (u64 start = 0; start < pool_size && !piece_mb; start += POOL_WINDOW_STEP) {
             const u64 size = split ? std::min(POOL_WINDOW_SIZE, pool_size - start) : pool_size;
@@ -3728,6 +3732,9 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::UnifiedRange(VAddr add
         return std::nullopt;
     }
     NotePoolReach(phys, size);
+    if (pool_pieces.budget && pool_pieces.imported > pool_pieces.budget) {
+        EvictPoolRegions();
+    }
     UnifiedPageTable(addr, size);
     if (pool_pieces.piece) {
         const auto [buffer, start] =
@@ -3759,6 +3766,7 @@ std::pair<const Buffer*, u64> BufferCache::PoolPiece(u64 first, u64 last) {
     if (it != p.regions.begin()) {
         const auto prev = std::prev(it);
         if (prev->second.end >= end) {
+            prev->second.last_tick = device.CurrentTick();
             return {prev->second.buffer.get(), prev->first};
         }
         if (prev->second.end > start) {
@@ -3782,7 +3790,7 @@ std::pair<const Buffer*, u64> BufferCache::PoolPiece(u64 first, u64 last) {
         p.regions.erase(old);
     }
     const Buffer* result = buffer.get();
-    p.regions.emplace(start, PoolRegion{end, std::move(buffer)});
+    p.regions.emplace(start, PoolRegion{end, std::move(buffer), device.CurrentTick()});
     p.imported += (end - start) - replaced_bytes;
     if (!replaced.empty()) {
         ++p.merges;
@@ -3821,7 +3829,76 @@ std::pair<const Buffer*, u64> BufferCache::PoolRegionAt(u64 phys) {
     auto& p = pool_pieces;
     std::scoped_lock lock{p.mutex};
     const auto it = std::prev(p.regions.upper_bound(phys));
+    it->second.last_tick = device.CurrentTick();
     return {it->second.buffer.get(), it->first};
+}
+
+void BufferCache::EvictPoolRegions() {
+    auto& p = pool_pieces;
+    std::scoped_lock lock{p.mutex};
+    // At most once per completed submission: nothing new became free in between.
+    const u64 completed = device.CompletedTick();
+    if (completed == p.evict_checked) {
+        return;
+    }
+    p.evict_checked = completed;
+    // Only regions every submission using them has finished with: in-flight work may still read
+    // their page table entries, which are cleared below.
+    std::vector<std::map<u64, PoolRegion>::iterator> idle;
+    for (auto it = p.regions.begin(); it != p.regions.end(); ++it) {
+        if (it->second.last_tick <= completed) {
+            idle.push_back(it);
+        }
+    }
+    std::sort(idle.begin(), idle.end(),
+              [](const auto& a, const auto& b) { return a->second.last_tick < b->second.last_tick; });
+    const u64 target = p.budget / 10 * 9;
+    std::vector<std::pair<u64, u64>> freed;
+    for (const auto& it : idle) {
+        if (p.imported <= target) {
+            break;
+        }
+        freed.emplace_back(it->first, it->second.end);
+        p.imported -= it->second.end - it->first;
+        p.evicted += it->second.end - it->first;
+        ++p.evictions;
+    }
+    if (freed.empty()) {
+        return;
+    }
+    // The page table forgets them first: the next binding of that memory makes a region again.
+    auto* table = reinterpret_cast<u64*>(bda_pagetable_buffer->mapped_data.data());
+    u64 low = UINT64_MAX, high = 0;
+    for (auto it = p.block_base.begin(); it != p.block_base.end();) {
+        const u64 base = it->second;
+        const bool gone = std::any_of(freed.begin(), freed.end(), [&](const auto& r) {
+            return base >= r.first && base < r.second;
+        });
+        if (!gone) {
+            ++it;
+            continue;
+        }
+        table[it->first] = 0;
+        unified_table_blocks.Subtract(it->first, it->first + 1);
+        low = std::min(low, it->first);
+        high = std::max(high, it->first);
+        it = p.block_base.erase(it);
+    }
+    if (low <= high) {
+        bda_pagetable_buffer->Flush(low * sizeof(u64), (high - low + 1) * sizeof(u64));
+    }
+    for (const auto& [start, end] : freed) {
+        p.regions.erase(start); // the GPU is done with it: freed now
+    }
+    if (p.evicted >= p.evict_reported + (256ull << 20)) {
+        p.evict_reported = p.evicted;
+        std::printf("Guest memory: %llu MiB of regions released over the %llu MiB budget "
+                    "(%llu releases); %llu MiB imported in %zu regions\n",
+                    static_cast<unsigned long long>(p.evicted >> 20),
+                    static_cast<unsigned long long>(p.budget >> 20),
+                    static_cast<unsigned long long>(p.evictions),
+                    static_cast<unsigned long long>(p.imported >> 20), p.regions.size());
+    }
 }
 
 void BufferCache::ReleasePoolRegions() {

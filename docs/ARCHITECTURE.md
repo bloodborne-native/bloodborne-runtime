@@ -154,7 +154,10 @@ reaches about 1.35 GiB of the 6.4 GiB pool in 2 MiB pieces (2.6 GiB in 64 MiB pi
 default) makes Metal import the pool in 16 MiB pieces the first time the GPU
 reaches them, merged into regions that never overlap (`BufferCache::PoolPiece`; `BB_POOL_PIECE_MB`,
 0: one import): a range across regions gets one region over all of them, and the regions it
-replaces are freed once the GPU is past them. Walking in the clinic, pinned memory falls from
+replaces are freed once the GPU is past them. Past a budget (`BB_POOL_BUDGET_MB`, 2,048 MiB) the
+least recently used regions the GPU is done with are freed too, their page table entries cleared
+first; the next binding of that memory makes a region again (1,024 MiB in the clinic: Metal counted
+2,786 MiB, at the same frame rate). Walking in the clinic, pinned memory falls from
 8,416 to 3,561–4,284 MiB and Metal's count from 8,358 to 3,586–3,712 MiB (under the 5,461 MiB
 an 8 GB Mac allows), at the same frame rate and picture. GPU
 objects stay in a Metal residency set (`gpu/shim/bbport_metal_residency.*`); removed ones are

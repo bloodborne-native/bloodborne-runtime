@@ -644,13 +644,18 @@ void MemoryEstimate() {
     const double steps = std::ceil(extra / double(64 << 20)) * 64.0;
     const double dmem = extra > 0 ? std::max(5376.0, 5056.0 + steps) : 5056.0;
     // Low memory mode (run.sh sets BB_POOL_PIECE_MB): only what the GPU reaches is given to it,
-    // 3072 MiB of the pool after a 49-minute session at 1080p, plus the larger scene (the
-    // launcher's memory.ts the same).
-    static const bool low_memory = [] {
-        const char* env = std::getenv("BB_POOL_PIECE_MB");
-        return env && std::strtoul(env, nullptr, 10) != 0;
+    // at most the pool's budget (BB_POOL_BUDGET_MB, 2048), plus the larger scene (the launcher's
+    // memory.ts the same).
+    static const double pool_budget = [] {
+        const char* pieces = std::getenv("BB_POOL_PIECE_MB");
+        if (!pieces || std::strtoul(pieces, nullptr, 10) == 0) {
+            return 0.0;
+        }
+        const char* budget = std::getenv("BB_POOL_BUDGET_MB");
+        const unsigned long mb = budget && budget[0] ? std::strtoul(budget, nullptr, 10) : 2048;
+        return mb ? double(mb) : 5056.0;
     }();
-    const double game = (low_memory ? 3072.0 + steps : dmem) + 1024.0;
+    const double game = (pool_budget > 0 ? pool_budget + steps : dmem) + 1024.0;
     const double used = game + 1000.0 + 360.0 * pixels / 1e6; // MiB
     static const int total = SDL_GetSystemRAM();               // MiB
     const bool high = total > 0 && used > total * 0.75;
