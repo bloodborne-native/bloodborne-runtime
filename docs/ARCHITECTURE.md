@@ -150,7 +150,8 @@ images it makes directly in Metal. Any GPU use of a no-copy buffer pins its whol
 written or not (measured: a 4 GiB buffer the CPU had written 64 MiB of pinned 4.1 GiB, with or
 without a residency set), so the whole imported pool is pinned. In Iosefka's Clinic the GPU
 reaches about 1.35 GiB of the 6.4 GiB pool in 2 MiB pieces (2.6 GiB in 64 MiB pieces;
-`BB_POOL_REACH=1` logs it). So Metal imports the pool in 16 MiB pieces the first time the GPU
+`BB_POOL_REACH=1` logs it). The low-memory mode (`low_memory=1`, the launcher's switch; off by
+default) makes Metal import the pool in 16 MiB pieces the first time the GPU
 reaches them, merged into regions that never overlap (`BufferCache::PoolPiece`; `BB_POOL_PIECE_MB`,
 0: one import): a range across regions gets one region over all of them, and the regions it
 replaces are freed once the GPU is past them. Walking in the clinic, pinned memory falls from

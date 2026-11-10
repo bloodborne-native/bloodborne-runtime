@@ -211,18 +211,20 @@ elif [[ -n ${scaled_output:-} ]]; then
     fi
     echo "Output ${scaled_output}: scene ${scaled_render}, direct memory ${BB_DMEM_MB:-default} MiB (live_resolution=1: live changes)"
 fi
-# Low-memory mode (BB_LOW_MEMORY=1; off by default): the iPhone's sizes. Metal counts the whole
-# imported pool against its memory limit (about two thirds of the Mac's memory), not only the pages
-# the game writes. The game allocates 4589 MiB of direct memory, all at start (Iosefka's Clinic,
-# 1080p), so 4608 MiB holds it; the flexible span drops from 1024 to 512 MiB (the game maps about
-# 322). Together 960 MiB less imported (Metal allocated 8233-8342 -> 7295-7469 MiB at 1080p, M3
-# Pro). Not the default yet: 3 of 4 runs with it had the GPU at 55-70 ms a frame instead of 16
-# (15-17 FPS), though the same sizes set by hand and a fourth run did not; that is not understood.
-# A scene above 1080p keeps the larger direct memory set above.
-if [[ ${BB_LOW_MEMORY:-} == 1 ]]; then
-    [[ -n ${BB_DMEM_MB:-} ]] || export BB_DMEM_MB=4608 BB_AUTO_DMEM=1
-    [[ -n ${BB_FLEX_SPAN_MB:-} ]] || export BB_FLEX_SPAN_MB=512 BB_AUTO_DMEM=1
-    echo "Memory: low-memory mode, direct memory ${BB_DMEM_MB} MiB, flexible span ${BB_FLEX_SPAN_MB} MiB"
+# Low-memory mode (bbport.ini low_memory=1, the launcher's Graphics switch; BB_LOW_MEMORY=0/1
+# wins; off by default): Metal imports the game's memory as the GPU reaches it, in merged 16 MiB
+# regions, instead of the whole pool. Any GPU use of a no-copy buffer pins its whole length, so the
+# whole import pins all of it. M3 Pro, Iosefka's Clinic, 1080p: Metal counted 3586-3712 MiB
+# instead of 8358 at the same frame rate; 6843 MiB after a 49-minute session across areas.
+low=${BB_LOW_MEMORY:-}
+if [[ -z $low && -f $BB_CONFIG ]]; then
+    while IFS= read -r line || [[ -n $line ]]; do
+        [[ $line =~ ^low_memory=([01])$ ]] && low=${BASH_REMATCH[1]}
+    done < "$BB_CONFIG"
+fi
+if [[ $low == 1 ]]; then
+    export BB_POOL_PIECE_MB=${BB_POOL_PIECE_MB:-16}
+    echo "Memory: low-memory mode, the game's memory given to Metal in ${BB_POOL_PIECE_MB} MiB pieces as it is used (low_memory=0: off)"
 fi
 # The game's patches (patches/Bloodborne.xml, bbport.ini's choices, the player's patches/ and
 # patches.json) are built by the game at start (`--patches -`, src/runtime_patches.c) from these.

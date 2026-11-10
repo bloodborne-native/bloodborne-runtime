@@ -607,8 +607,8 @@ BufferCache::BufferCache(Backend::Device& device_, const Vulkan::Instance& insta
         const bool split_default = true;
 #endif
         const bool split = split_env && split_env[0] ? split_env[0] != '0' : split_default;
-        // Metal: in pieces on first use, merged into regions (PoolPieces), unless
-        // BB_POOL_PIECE_MB=0 or a split is forced. Measured on the M3 Pro, Iosefka's Clinic,
+        // Metal, BB_POOL_PIECE_MB=N (run.sh's low-memory mode gives 16; off by default): in
+        // pieces on first use, merged into regions (PoolPieces). Measured on the M3 Pro, Iosefka's Clinic,
         // 1080p, walking on a quiet Mac: the whole import pinned 8416 MiB with 8358 MiB counted
         // by Metal; 16 MiB regions pin 3561-4284 MiB and Metal counts 3586-3712, at the same
         // frame rate (56.3-57.1 FPS) and picture. Traces where a walk ends gave the same GPU
@@ -617,7 +617,7 @@ BufferCache::BufferCache(Backend::Device& device_, const Vulkan::Instance& insta
 #if BB_METAL_BACKEND
         if (MetalLayer::FrameEnabled() && !split) {
             const char* piece_env = std::getenv("BB_POOL_PIECE_MB");
-            piece_mb = piece_env && piece_env[0] ? std::strtoull(piece_env, nullptr, 10) : 16;
+            piece_mb = piece_env && piece_env[0] ? std::strtoull(piece_env, nullptr, 10) : 0;
             piece_mb = piece_mb == 0 ? 0 : std::bit_ceil(std::clamp<u64>(piece_mb, 1, 1024));
         }
 #endif
