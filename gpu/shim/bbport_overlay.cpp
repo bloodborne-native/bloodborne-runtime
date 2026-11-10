@@ -641,8 +641,16 @@ void MemoryEstimate() {
     const double pixels = double(w) * double(h);
     const double extra = patched ? std::max(0.0, (pixels - 1920.0 * 1080.0) * 448.0) : 0.0;
     // run.sh: at least 5376 MiB for any scene above 1080p (the larger graphics heaps).
-    const double dmem = extra > 0 ? std::max(5376.0, 5056.0 + std::ceil(extra / double(64 << 20)) * 64.0) : 5056.0;
-    const double game = dmem + 1024.0;
+    const double steps = std::ceil(extra / double(64 << 20)) * 64.0;
+    const double dmem = extra > 0 ? std::max(5376.0, 5056.0 + steps) : 5056.0;
+    // Low memory mode (run.sh sets BB_POOL_PIECE_MB): only what the GPU reaches is given to it,
+    // 3072 MiB of the pool after a 49-minute session at 1080p, plus the larger scene (the
+    // launcher's memory.ts the same).
+    static const bool low_memory = [] {
+        const char* env = std::getenv("BB_POOL_PIECE_MB");
+        return env && std::strtoul(env, nullptr, 10) != 0;
+    }();
+    const double game = (low_memory ? 3072.0 + steps : dmem) + 1024.0;
     const double used = game + 1000.0 + 360.0 * pixels / 1e6; // MiB
     static const int total = SDL_GetSystemRAM();               // MiB
     const bool high = total > 0 && used > total * 0.75;
