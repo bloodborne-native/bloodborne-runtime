@@ -596,17 +596,12 @@ BufferCache::BufferCache(Backend::Device& device_, const Vulkan::Instance& insta
         // one starts every 3 GiB and reaches 512 MiB into the next, and a binding uses the window
         // its start is in. The overlap is all the memory imported twice: a whole second import
         // from 3 GiB (0.7.0) put 17 GB in the residency set at 1440p (10 GB pool) and the device
-        // was lost at start. The Metal renderer reads past 4 GiB correctly (Metal's buffer offsets
-        // are 64-bit; the iPhone always ran it with one import), so it imports the pool once:
-        // the windows' 512 MiB overlaps counted against Metal's memory limit for nothing (8753 ->
-        // about 8240 MiB allocated at 1080p). BB_POOL_SPLIT=0/1 forces one import or the windows.
+        // was lost at start. The Metal renderer uses the windows too: imported once (0.10.0), the
+        // pool drew a black sky with streaks again after some play (reported on Discord, as on
+        // MoltenVK before 0.7.0), so something on the Metal side still breaks past 4 GiB.
+        // BB_POOL_SPLIT=0/1 forces one import or the windows.
         const char* split_env = std::getenv("BB_POOL_SPLIT");
-#if BB_METAL_BACKEND
-        const bool split_default = !MetalLayer::FrameEnabled();
-#else
-        const bool split_default = true;
-#endif
-        const bool split = split_env && split_env[0] ? split_env[0] != '0' : split_default;
+        const bool split = !(split_env && split_env[0] == '0');
         // Metal, BB_POOL_PIECE_MB=N (run.sh's low-memory mode gives 16; off by default): in
         // pieces on first use, merged into regions (PoolPieces). Measured on the M3 Pro, Iosefka's Clinic,
         // 1080p, walking on a quiet Mac: the whole import pinned 8416 MiB with 8358 MiB counted
@@ -615,7 +610,8 @@ BufferCache::BufferCache(Backend::Device& device_, const Vulkan::Instance& insta
         // time for pieces and the whole pool (52.4 against 53.0 FPS).
         u64 piece_mb = 0;
 #if BB_METAL_BACKEND
-        if (MetalLayer::FrameEnabled() && !split) {
+        // Regions are buffers of their own: no binding offset in them comes near 4 GiB.
+        if (MetalLayer::FrameEnabled() && !(split_env && split_env[0] == '1')) {
             const char* piece_env = std::getenv("BB_POOL_PIECE_MB");
             piece_mb = piece_env && piece_env[0] ? std::strtoull(piece_env, nullptr, 10) : 0;
             piece_mb = piece_mb == 0 ? 0 : std::bit_ceil(std::clamp<u64>(piece_mb, 1, 1024));
