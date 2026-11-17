@@ -38,7 +38,13 @@ project it is based on.
 - [**droogie/bbhost**](https://github.com/droogie/bbhost/tree/566184a74f071166299bb656c4af479e5bbe2771)
   (GPL-3.0-or-later): the network side of its emulator, adapted as the online module's backend for
   The Hunter's Dream pool (`gpu/bbnet20/thd`). Its license makes the online module
-  GPL-3.0-or-later (`gpu/bbnet20/LICENSE.GPL-3.0`, also in the app).
+  GPL-3.0-or-later (`gpu/bbnet20/LICENSE.GPL-3.0`, also in the app). From v0.2.31 (the server's
+  co-op, invasion and PvP cutover): the signaling handshake between players (`thd_np.cpp`, from
+  `src/hle/np_signaling.cpp`, `net.cpp` and `np_matching2.cpp`, PR #217), the full-size P2P
+  datagrams, the NpId comparison up to the name's end, and the character name's answer in
+  `sceNpScoreSanitizeComment` (`thd_score.h`, from `np_score.h`, PR #238). From v0.2.35: the event
+  poller's long polls and generations (`thd_poll_pacing.h`, from `net/poll_pacing.h`) and the sign-in
+  check against `/auth/whoami` (`thd_sign_in_check.h`, from `net/sign_in_check.h`).
 
 ## From other forks
 

@@ -430,6 +430,17 @@ target_link_libraries(avplayer-clock-test PRIVATE Threads::Threads)
 add_executable(fixed-quad-tessellation-test EXCLUDE_FROM_ALL ../tests/test_fixed_quad_tessellation.cpp)
 target_compile_options(fixed-quad-tessellation-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(fixed-quad-tessellation-test PRIVATE shadps4)
+add_executable(thd-poll-pacing-test EXCLUDE_FROM_ALL ../tests/test_thd_poll_pacing.cpp)
+target_compile_options(thd-poll-pacing-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(thd-poll-pacing-test PRIVATE ..)
+target_link_libraries(thd-poll-pacing-test PRIVATE Threads::Threads)
+add_executable(thd-sign-in-check-test EXCLUDE_FROM_ALL ../tests/test_thd_sign_in_check.cpp)
+target_compile_options(thd-sign-in-check-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(thd-sign-in-check-test PRIVATE .. ${CMAKE_SOURCE_DIR}/gpu/bbnet20/vendor/nlohmann ${nlohmann_json_SOURCE_DIR}/include)
+target_link_libraries(thd-sign-in-check-test PRIVATE nlohmann_json::nlohmann_json)
+add_executable(thd-score-test EXCLUDE_FROM_ALL ../tests/test_thd_score.cpp)
+target_compile_options(thd-score-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(thd-score-test PRIVATE ..)
 add_executable(motion-history-test EXCLUDE_FROM_ALL ../tests/test_motion_history.cpp)
 target_compile_options(motion-history-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(motion-history-test PRIVATE ..)
@@ -495,7 +506,7 @@ target_compile_options(upscaler-support-test PRIVATE -UNDEBUG)
 # Vulkan::UniqueImage now), translation-memory-test (BufferCopyShaderHash is gone). Their targets
 # stay, so a repair has somewhere to start.
 if (BUILD_TESTING)
-    set(BBGPU_TESTS image-upload-hash-test slot-vector-test handle-table-test avplayer-queue-test
+    set(BBGPU_TESTS thd-score-test thd-poll-pacing-test thd-sign-in-check-test image-upload-hash-test slot-vector-test handle-table-test avplayer-queue-test
         avplayer-clock-test fixed-quad-tessellation-test motion-history-test ui-composition-test
         cp-decoder-test settings-test trophy-queue-test upscaler-support-test)
     foreach(test IN LISTS BBGPU_TESTS)
