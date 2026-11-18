@@ -5,6 +5,7 @@
 // signaling handshake from v0.2.31, PR #217), GPL-3.0-or-later.
 #include "thd_internal.h"
 #include "thd_score.h"
+#include "thd_signal_admit.h"
 
 #include <algorithm>
 #include <atomic>
@@ -14,6 +15,7 @@
 #include <map>
 #include <mutex>
 #include <random>
+#include <thread>
 #include <tuple>
 #include <unordered_map>
 #include <vector>
@@ -836,8 +838,10 @@ s32 PS4_SYSV_ABI webapi_parse_npid(const char* json, void* npid) {
 
 } // namespace
 
-// A signaling datagram from another client (thd_net.cpp), on the dispatcher.
-void SignalingControl(const std::uint8_t* data, std::size_t len, std::uint32_t addr, std::uint16_t port) {
+namespace {
+
+// Acts on a datagram that has been admitted (thd_signal_admit.h).
+void handle_signal(const std::uint8_t* data, std::size_t len, std::uint32_t addr, std::uint16_t port) {
     if (len < kPacketLen) return;
     const std::uint8_t kind = data[4];
     const Reason reason = static_cast<Reason>(data[5]);
@@ -946,6 +950,80 @@ void SignalingControl(const std::uint8_t* data, std::size_t len, std::uint32_t a
         }
     }
     fire_all(events);
+}
+
+// Strangers' ActivationRequests wait for the server's word on who they are: one lookup at a time, and
+// an id that failed is not asked about again for a minute.
+std::atomic<bool> g_resolving{false};
+std::mutex g_denied_mu;
+std::map<std::string, std::int64_t> g_denied;  // id -> NowMs() until which it is ignored
+
+}  // namespace
+
+// A signaling datagram from another client (thd_net.cpp), on the dispatcher. bbhost acts on every
+// one; here it needs to be for us, from the sender's own address, and a stranger must be vouched for
+// by the server (review of the pull request; thd_signal_admit.h).
+void SignalingControl(const std::uint8_t* data, std::size_t len, std::uint32_t addr, std::uint16_t port) {
+    if (len < kPacketLen) return;
+    std::string from(reinterpret_cast<const char*>(data + kFromAt), kIdLen);
+    from.resize(std::strlen(from.c_str()));
+    if (from.empty()) return;
+    const std::string me = OnlineId();
+    SignalAdmit::Input in;
+    in.to_ours = !me.empty() && std::strncmp(reinterpret_cast<const char*>(data + kToAt), me.c_str(), kIdLen) == 0;
+    in.activation_request = data[4] == kActivationRequest;
+    in.src_addr = addr;
+    {
+        std::lock_guard lk(g_sig_mu);
+        const unsigned tid = find_transport_locked(from);
+        in.have_transport = tid != 0;
+        if (tid) in.transport_addr = g_tr[tid].addr;
+        for (const auto& [id, t] : g_tr) in.live_transports += t.state != State::Inactive;
+    }
+    Peer p;
+    if (PeersFindOnline(from, &p)) {
+        in.peer_known = true;
+        in.peer_addr = p.addr;
+        in.peer_local_addr = p.local_addr;
+    }
+    const SignalAdmit::Verdict verdict = SignalAdmit::Admit(in);
+    if (verdict == SignalAdmit::Verdict::Accept) {
+        handle_signal(data, len, addr, port);
+        return;
+    }
+    static std::atomic<int> logged{0};
+    if (verdict == SignalAdmit::Verdict::Drop) {
+        if (in.to_ours && logged.fetch_add(1) < 5) {
+            Log("np: signaling datagram from %s dropped: not from its address", from.c_str());
+        }
+        return;
+    }
+    // A stranger's ActivationRequest.
+    {
+        std::lock_guard lk(g_denied_mu);
+        const std::int64_t now = NowMs();
+        for (auto it = g_denied.begin(); it != g_denied.end();) it = it->second <= now ? g_denied.erase(it) : std::next(it);
+        if (g_denied.count(from)) return;
+    }
+    bool expected = false;
+    if (!g_resolving.compare_exchange_strong(expected, true)) return;
+    const std::vector<std::uint8_t> pkt(data, data + len);
+    std::thread([pkt, from, addr, port] {
+        std::uint32_t resolved = 0;
+        std::uint16_t resolved_port = 0;
+        std::string error;
+        const bool ok = ServerSignalingResolve(from, &resolved, &resolved_port, error) &&
+                        SignalAdmit::ResolvedMatches(resolved, addr);
+        g_resolving = false;
+        if (!ok) {
+            std::lock_guard lk(g_denied_mu);
+            if (g_denied.size() < 64) g_denied[from] = NowMs() + 60000;
+            Log("np: signaling activation from %s not vouched for by the server (%s)", from.c_str(),
+                error.empty() ? "another address" : error.c_str());
+            return;
+        }
+        DispatchAfter(0, Prio::Signaling, [pkt, addr, port] { handle_signal(pkt.data(), pkt.size(), addr, port); });
+    }).detach();
 }
 
 bool SignalingLive(const std::string& online_id) {

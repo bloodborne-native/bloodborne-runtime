@@ -438,6 +438,9 @@ add_executable(thd-sign-in-check-test EXCLUDE_FROM_ALL ../tests/test_thd_sign_in
 target_compile_options(thd-sign-in-check-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(thd-sign-in-check-test PRIVATE .. ${CMAKE_SOURCE_DIR}/gpu/bbnet20/vendor/nlohmann ${nlohmann_json_SOURCE_DIR}/include)
 target_link_libraries(thd-sign-in-check-test PRIVATE nlohmann_json::nlohmann_json)
+add_executable(thd-signal-admit-test EXCLUDE_FROM_ALL ../tests/test_thd_signal_admit.cpp)
+target_compile_options(thd-signal-admit-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(thd-signal-admit-test PRIVATE ..)
 add_executable(thd-score-test EXCLUDE_FROM_ALL ../tests/test_thd_score.cpp)
 target_compile_options(thd-score-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(thd-score-test PRIVATE ..)
@@ -506,7 +509,7 @@ target_compile_options(upscaler-support-test PRIVATE -UNDEBUG)
 # Vulkan::UniqueImage now), translation-memory-test (BufferCopyShaderHash is gone). Their targets
 # stay, so a repair has somewhere to start.
 if (BUILD_TESTING)
-    set(BBGPU_TESTS thd-score-test thd-poll-pacing-test thd-sign-in-check-test image-upload-hash-test slot-vector-test handle-table-test avplayer-queue-test
+    set(BBGPU_TESTS thd-score-test thd-signal-admit-test thd-poll-pacing-test thd-sign-in-check-test image-upload-hash-test slot-vector-test handle-table-test avplayer-queue-test
         avplayer-clock-test fixed-quad-tessellation-test motion-history-test ui-composition-test
         cp-decoder-test settings-test trophy-queue-test upscaler-support-test)
     foreach(test IN LISTS BBGPU_TESTS)

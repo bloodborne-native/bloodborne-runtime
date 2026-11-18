@@ -35,7 +35,12 @@ P2P datagrams, the NpId comparison and `sceNpScoreSanitizeComment` follow bbhost
 co-op, invasions and PvP only with clients that speak them (messages, bloodstains and ghosts
 work with older ones). The event poller follows v0.2.35's too: the server holds an empty poll up to
 25 s (`WaitMs`, `WaitMaxMs`; its `np-long-poll.md`) instead of the client asking four times a second,
-and the sign-in is checked once a start with `/auth/whoami`; a refused one keeps the game offline. With that pool the game's NP and sceNet imports are these, ahead of shadPS4's;
+and the sign-in is checked once a start with `/auth/whoami`; a refused one keeps the game offline. One difference from bbhost: its receiver acts on every
+signaling datagram, which anyone who knows a player's address and P2P port could forge. Here
+(`thd_signal_admit.h`) a datagram must name our online id as its receiver and come from the sender's
+own address (the IP; a NAT may change the port); a player the room does not know can only open a
+link with an ActivationRequest the server confirms (`/np/signaling/resolve`, one lookup at a time);
+and at most 8 transports are live. With that pool the game's NP and sceNet imports are these, ahead of shadPS4's;
 the shadNet pool does not use them.
 
 What it touches in the game (`thd_session.cpp`), all at addresses of the 1.09 executable and only
