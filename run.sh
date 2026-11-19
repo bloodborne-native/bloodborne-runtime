@@ -222,9 +222,11 @@ if [[ -z $low && -f $BB_CONFIG ]]; then
         [[ $line =~ ^low_memory=([01])$ ]] && low=${BASH_REMATCH[1]}
     done < "$BB_CONFIG"
 fi
+# The texture cache's budget is capped too (BB_GC_BUDGET_CAP_MB, 5 GiB; Metal's own budget when it
+# is smaller): by default it follows Metal's working set and kept the textures of every area seen.
 if [[ $low == 1 ]]; then
-    export BB_POOL_PIECE_MB=${BB_POOL_PIECE_MB:-16}
-    echo "Memory: low-memory mode, the game's memory given to Metal in ${BB_POOL_PIECE_MB} MiB pieces as it is used (low_memory=0: off)"
+    export BB_POOL_PIECE_MB=${BB_POOL_PIECE_MB:-16} BB_GC_BUDGET_CAP_MB=${BB_GC_BUDGET_CAP_MB:-5120}
+    echo "Memory: low-memory mode, the game's memory given to Metal in ${BB_POOL_PIECE_MB} MiB pieces as it is used, textures kept within ${BB_GC_BUDGET_CAP_MB} MiB (low_memory=0: off)"
 fi
 # The game's patches (patches/Bloodborne.xml, bbport.ini's choices, the player's patches/ and
 # patches.json) are built by the game at start (`--patches -`, src/runtime_patches.c) from these.

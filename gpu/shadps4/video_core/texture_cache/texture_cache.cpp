@@ -1322,12 +1322,24 @@ void TextureCache::GarbageCollectImages() {
         // collector evicted images used two or three frames ago on every submission and wrote
         // GPU-written ones back. Compare with the driver's current budget instead.
         // BB_GC_BUDGET_MB=N: this rule with a fixed budget on any GPU (tests on a desktop).
+        // BB_GC_BUDGET_CAP_MB=N (run.sh sets 5120 in the low-memory mode): the driver's budget,
+        // but never more than N. Metal's budget is the working set (13.3 GiB on an 18 GB M3 Pro),
+        // whose 70% trigger let the cache grow for hours (issue #22: textures 1,059 -> 2,365 MiB
+        // and Metal 4.0 -> 6.1 GB in 2 h); capped at 5120 a 30-minute walk kept Metal at
+        // 3.5-3.6 GB and textures at 720-840 MiB, at 30 FPS with no frame over 150 ms.
         static const u64 forced_budget = [] {
             const char* env = std::getenv("BB_GC_BUDGET_MB");
             return env ? std::strtoull(env, nullptr, 10) << 20 : 0;
         }();
+        static const u64 budget_cap = [] {
+            const char* env = std::getenv("BB_GC_BUDGET_CAP_MB");
+            return env ? std::strtoull(env, nullptr, 10) << 20 : 0;
+        }();
         if (device.GetCapabilities().integrated || forced_budget) {
-            const u64 budget = forced_budget ? forced_budget : memory.budget;
+            u64 budget = forced_budget ? forced_budget : memory.budget;
+            if (!forced_budget && budget_cap && (budget == 0 || budget > budget_cap)) {
+                budget = budget_cap;
+            }
             if (budget != 0) {
                 trigger_gc_memory = budget / 10 * 7;
                 pressure_gc_memory = budget / 100 * 85;

@@ -159,7 +159,12 @@ least recently used regions the GPU is done with are freed too, their page table
 first; the next binding of that memory makes a region again (1,024 MiB in the clinic: Metal counted
 2,786 MiB, at the same frame rate). Walking in the clinic, pinned memory falls from
 8,416 to 3,561–4,284 MiB and Metal's count from 8,358 to 3,586–3,712 MiB (under the 5,461 MiB
-an 8 GB Mac allows), at the same frame rate and picture. GPU
+an 8 GB Mac allows), at the same frame rate and picture. The mode also caps the texture
+collector's budget at 5 GiB (`BB_GC_BUDGET_CAP_MB`; Metal's own budget, the working set, when
+that is smaller): with the working set as its budget (13.3 GiB on an 18 GB M3 Pro) the cache kept
+the textures of every area seen, and Metal's count grew from 4.0 to 6.1 GB in two hours. Capped,
+a 30-minute walk kept Metal at 3.5–3.6 GB and textures at 720–840 MiB, at 30 FPS with no frame
+over 150 ms (against 3.9 to 4.8 GB, textures 1,059 to 1,800 MiB, uncapped). GPU
 objects stay in a Metal residency set (`gpu/shim/bbport_metal_residency.*`); removed ones are
 kept until the GPU has finished every submission that could use them.
 

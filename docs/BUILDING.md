@@ -72,8 +72,9 @@ BB_GAME_DIR=/path/to/your/game bash run.sh
 | `BB_GAME_DIR` | The game folder |
 | `BB_HIDDEN_WINDOW=1` | The window is made hidden and never shown (test runs with `HEADLESS=1`) |
 | `BB_OUTPUT_RES=WxH`, `BB_RENDER_RES=WxH` | Output size, and the game's render size (with `BB_RENDER_RES`, also set `BB_DMEM_MB`) |
-| `BB_LOW_MEMORY=0/1` | The low-memory mode, over `bbport.ini`'s `low_memory` (the launcher's switch; off by default): the game's memory given to Metal in 16 MiB pieces as it is used (`BB_POOL_PIECE_MB`), about 3.6 GB counted in the clinic instead of 8.4 |
+| `BB_LOW_MEMORY=0/1` | The low-memory mode, over `bbport.ini`'s `low_memory` (the launcher's switch; off by default): the game's memory given to Metal in 16 MiB pieces as it is used (`BB_POOL_PIECE_MB`), about 3.6 GB counted in the clinic instead of 8.4, and the texture cache capped (`BB_GC_BUDGET_CAP_MB`) |
 | `BB_POOL_PIECE_MB` | Metal: the size of the pieces the game's memory pool is imported in as the GPU first reaches them (a power of two up to 1024; default 0, the whole pool as one buffer; the low-memory mode sets 16) |
+| `BB_GC_BUDGET_CAP_MB` | The texture collector's budget on integrated GPUs is the driver's (Metal: the working set), but never more than this (the low-memory mode sets 5120; the collector starts at 70% of it). `BB_GC_BUDGET_MB=N` instead forces a budget of N on any GPU |
 | `BB_POOL_BUDGET_MB` | With pool pieces: the most of the pool kept imported; past it the least recently used regions the GPU is done with are freed (default 2048; 0: no budget) |
 | `BB_POOL_REACH=1` | Logs how much of the game's memory pool the GPU has reached (2 MiB and 64 MiB pieces), at each new 64 MiB piece |
 | `BB_FLEX_SPAN_MB` | The span flexible memory is placed in, 448–1,024 MiB (default 1,024) |
