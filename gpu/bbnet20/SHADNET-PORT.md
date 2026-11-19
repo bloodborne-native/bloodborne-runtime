@@ -29,7 +29,18 @@ The co-op pool for The Hunter's Dream (`online_pool=huntersdream`, which sets
 `src/hle/net.cpp`, `src/hle/np_matching2.cpp`, `src/hle/np_signaling.cpp`, the NP parts of
 `src/hle/system.cpp`, and `src/net/{http,account,session,stun}.cpp`. These portions are
 GPL-3.0-or-later, copyright with the bbhost contributors, so the module as a whole is
-GPL-3.0-or-later. With that pool the game's NP and sceNet imports are these, ahead of shadPS4's;
+GPL-3.0-or-later. The signaling handshake between players, matching2's use of it, the full-size
+P2P datagrams, the NpId comparison and `sceNpScoreSanitizeComment` follow bbhost v0.2.31
+(https://github.com/droogie/bbhost/releases/tag/v0.2.31, PR #217 and #238): its server pairs
+co-op, invasions and PvP only with clients that speak them (messages, bloodstains and ghosts
+work with older ones). The event poller follows v0.2.35's too: the server holds an empty poll up to
+25 s (`WaitMs`, `WaitMaxMs`; its `np-long-poll.md`) instead of the client asking four times a second,
+and the sign-in is checked once a start with `/auth/whoami`; a refused one keeps the game offline. One difference from bbhost: its receiver acts on every
+signaling datagram, which anyone who knows a player's address and P2P port could forge. Here
+(`thd_signal_admit.h`) a datagram must name our online id as its receiver and come from the sender's
+own address (the IP; a NAT may change the port); a player the room does not know can only open a
+link with an ActivationRequest the server confirms (`/np/signaling/resolve`, one lookup at a time);
+and at most 8 transports are live. With that pool the game's NP and sceNet imports are these, ahead of shadPS4's;
 the shadNet pool does not use them.
 
 What it touches in the game (`thd_session.cpp`), all at addresses of the 1.09 executable and only
