@@ -14,6 +14,7 @@
 #   TEST_TITLE=...  the title (default: NAME);  TEST_DETAIL=...  a second line.
 # The window comes to the front and takes the keyboard (it can be played by hand);
 # BB_BENCH_BACKGROUND=1 keeps it a background app, which macOS never gives the keyboard.
+# HEADLESS=1: no window on screen and no sound (tools/mac_bench.sh); frames come from tools/grab.sh.
 set -euo pipefail
 cd -- "$(dirname -- "$0")/.."
 name=${1:?usage: tools/test_run.sh NAME [ENV=VALUE...]}

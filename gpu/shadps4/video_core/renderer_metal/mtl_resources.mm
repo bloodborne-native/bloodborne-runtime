@@ -12,9 +12,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <array>
 #include <atomic>
 #include <mutex>
 #include <set>
+#include <unordered_set>
 
 #include "common/assert.h"
 #include "video_core/renderer_backend/device.h"
@@ -61,6 +63,23 @@ void Init(void* device) {
                 mtl_device.name.UTF8String);
 }
 
+// Live buffers by kind (LiveBuffers): what each kind holds is found again at release from the
+// buffer itself (storage and CPU cache mode); buffers over host memory are remembered by object.
+std::array<std::atomic<u64>, kBufferKinds> live_buffers{}, live_buffer_bytes{};
+std::mutex wrapped_mutex;
+std::unordered_set<const void*> wrapped;
+
+int BufferKind(id<MTLBuffer> buffer) {
+    if (buffer.storageMode == MTLStorageModePrivate) return 0;
+    return buffer.cpuCacheMode == MTLCPUCacheModeWriteCombined ? 2 : 1;
+}
+
+void CountBuffer(int kind, id<MTLBuffer> buffer, int sign) {
+    const u64 bytes = kind == 3 ? buffer.length : buffer.allocatedSize;
+    live_buffers[kind].fetch_add(u64(sign), std::memory_order_relaxed);
+    live_buffer_bytes[kind].fetch_add(u64(sign) * bytes, std::memory_order_relaxed);
+}
+
 Buffer NewBuffer(u64 size, Storage storage) {
     // Metal's own hazard tracking, as MoltenVK's buffers have.
     MTLResourceOptions options = MTLResourceHazardTrackingModeDefault;
@@ -83,6 +102,7 @@ Buffer NewBuffer(u64 size, Storage storage) {
 #else
     ASSERT_MSG(buffer, "Metal could not make a buffer of {} bytes", size);
 #endif
+    CountBuffer(BufferKind(buffer), buffer, 1);
     return {(__bridge_retained void*)buffer,
             storage == Storage::Private ? nullptr : buffer.contents};
 }
@@ -95,7 +115,13 @@ Buffer WrapHostMemory(void* host, u64 size) {
                                                                 MTLResourceHazardTrackingModeDefault
                                                     deallocator:nil];
     ASSERT_MSG(buffer, "Metal could not use {} bytes of host memory in place", size);
-    return {(__bridge_retained void*)buffer, host};
+    CountBuffer(3, buffer, 1);
+    void* object = (__bridge_retained void*)buffer;
+    {
+        std::scoped_lock lock{wrapped_mutex};
+        wrapped.insert(object);
+    }
+    return {object, host};
 }
 
 std::atomic<u64> live_textures{0}, live_texture_bytes{0};
@@ -170,6 +196,14 @@ void Release(void* object) {
         if ([resource conformsToProtocol:@protocol(MTLTexture)]) {
             live_textures.fetch_sub(1, std::memory_order_relaxed);
             live_texture_bytes.fetch_sub(resource.allocatedSize, std::memory_order_relaxed);
+        } else if ([resource conformsToProtocol:@protocol(MTLBuffer)]) {
+            bool host = false;
+            {
+                std::scoped_lock lock{wrapped_mutex};
+                host = wrapped.erase(object) != 0;
+            }
+            id<MTLBuffer> buffer = (id<MTLBuffer>)resource;
+            CountBuffer(host ? 3 : BufferKind(buffer), buffer, -1);
         }
         resource = nil;
     }
@@ -178,6 +212,13 @@ void Release(void* object) {
 void LiveTextures(u64* count, u64* bytes) {
     *count = live_textures.load(std::memory_order_relaxed);
     *bytes = live_texture_bytes.load(std::memory_order_relaxed);
+}
+
+void LiveBuffers(u64 counts[kBufferKinds], u64 bytes[kBufferKinds]) {
+    for (int k = 0; k < kBufferKinds; ++k) {
+        counts[k] = live_buffers[k].load(std::memory_order_relaxed);
+        bytes[k] = live_buffer_bytes[k].load(std::memory_order_relaxed);
+    }
 }
 
 } // namespace MetalResources

@@ -387,6 +387,21 @@ static void PrintMemory() {
                     "made by the Metal backend live (%llu MiB)\n",
                     metal_used >> 20, metal_budget >> 20, (unsigned long long)textures,
                     (unsigned long long)(texture_bytes >> 20));
+        // What else it holds: the buffers the backend made, by kind, and the rest (MoltenVK's
+        // objects, the frame's own buffers, pipelines).
+        u64 counts[MetalResources::kBufferKinds], bytes[MetalResources::kBufferKinds];
+        MetalResources::LiveBuffers(counts, bytes);
+        u64 buffers = 0;
+        for (int k = 0; k < MetalResources::kBufferKinds; ++k) buffers += bytes[k];
+        const u64 rest = metal_used > texture_bytes + buffers ? metal_used - texture_bytes - buffers : 0;
+        std::printf("Memory: Metal buffers live: private %llu MiB in %llu, shared %llu MiB in %llu, "
+                    "write-combined %llu MiB in %llu; over guest memory %llu MiB in %llu; "
+                    "the rest of Metal's count %llu MiB\n",
+                    (unsigned long long)(bytes[0] >> 20), (unsigned long long)counts[0],
+                    (unsigned long long)(bytes[1] >> 20), (unsigned long long)counts[1],
+                    (unsigned long long)(bytes[2] >> 20), (unsigned long long)counts[2],
+                    (unsigned long long)(bytes[3] >> 20), (unsigned long long)counts[3],
+                    (unsigned long long)(rest >> 20));
     }
 #endif
 }

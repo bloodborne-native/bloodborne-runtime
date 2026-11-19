@@ -70,6 +70,7 @@ BB_GAME_DIR=/path/to/your/game bash run.sh
 | Variable | Effect |
 |---|---|
 | `BB_GAME_DIR` | The game folder |
+| `BB_HIDDEN_WINDOW=1` | The window is made hidden and never shown (test runs with `HEADLESS=1`) |
 | `BB_OUTPUT_RES=WxH`, `BB_RENDER_RES=WxH` | Output size, and the game's render size (with `BB_RENDER_RES`, also set `BB_DMEM_MB`) |
 | `BB_LOW_MEMORY=0/1` | The low-memory mode, over `bbport.ini`'s `low_memory` (the launcher's switch; off by default): the game's memory given to Metal in 16 MiB pieces as it is used (`BB_POOL_PIECE_MB`), about 3.6 GB counted in the clinic instead of 8.4 |
 | `BB_POOL_PIECE_MB` | Metal: the size of the pieces the game's memory pool is imported in as the GPU first reaches them (a power of two up to 1024; default 0, the whole pool as one buffer; the low-memory mode sets 16) |
@@ -148,6 +149,10 @@ a time (`pgrep -x bb-probe` first). Test windows open on the screen.
 - Test games are normal apps: the window comes to the front and takes the keyboard, so a test can
   be played by hand. `BB_BENCH_BACKGROUND=1` makes one a background-only app instead: it takes no
   focus from the desktop, and never gets the keyboard (macOS does not make it the active app).
+- `HEADLESS=1`: no window on screen and no sound (`BB_HIDDEN_WINDOW=1`, `BB_AUDIO=none`, a
+  background-only app); the game renders as usual and `tools/grab.sh` still saves its frames.
+  macOS slows a hidden window down (the clinic reads about 39.5 FPS against about 48 shown), so
+  compare frame rates only between runs that are both headless or both shown.
 - Scripted menu keys: `BB_MENU_KEYS_FILE=$PWD/out/menu.keys` with tokens like
   `r1 r1 down enter`; `touch out/menu.trigger` opens or closes the menu.
 - `tools/mac_bench.sh`: what `test_run.sh` runs underneath (`SAMPLE=1` takes a CPU sample,

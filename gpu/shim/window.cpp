@@ -178,6 +178,10 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_HIGH_PIXEL_DENSITY_BOOLEAN,
                            !retina || retina[0] != '0');
 #endif
+    // BB_HIDDEN_WINDOW=1 (tests, tools/mac_bench.sh HEADLESS=1): the window is never shown; the
+    // game still renders and presents, and tools/grab.sh still saves its frames.
+    const char* hidden = std::getenv("BB_HIDDEN_WINDOW");
+    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_HIDDEN_BOOLEAN, hidden && hidden[0] == '1');
     const char* fullscreen = std::getenv("BB_FULLSCREEN");
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_FULLSCREEN_BOOLEAN, fullscreen && fullscreen[0] == '1');
     base_title = title;

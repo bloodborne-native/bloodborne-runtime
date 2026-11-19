@@ -15,6 +15,11 @@ pgrep -x bb-probe > /dev/null && { echo "A game is already running: not starting
 # The game is a normal app: it comes to the front and takes the keyboard, so a test can be played
 # by hand. BB_BENCH_BACKGROUND=1: a background-only app instead (no focus taken from the desktop,
 # and no keyboard: macOS never makes it the active app). The pad file works either way.
+# HEADLESS=1: no window on screen and no sound (BB_HIDDEN_WINDOW=1, BB_AUDIO=none), a background
+# app; the game renders as usual and tools/grab.sh saves its frames.
+if [[ ${HEADLESS:-0} == 1 ]]; then
+    export BB_BENCH_BACKGROUND=1 BB_HIDDEN_WINDOW=1 BB_AUDIO=none
+fi
 [[ ${BB_BENCH_BACKGROUND:-0} == 1 ]] && export SDL_MAC_BACKGROUND_APP=1
 env BB_GAME_DIR="${BB_GAME_DIR:-$HOME/Downloads/PS4/Bloodborne/CUSA03173}" \
     BB_PAD_FILE="$PWD/out/pad" BB_TEST_CLOCK="$PWD/out/test.clock" BB_TOGGLE_FILE="$PWD/out/toggles" BB_FRAME_STATS=1 \
@@ -84,9 +89,11 @@ if [[ ${SAMPLE:-0} == 1 ]]; then
 fi
 # GPU utilization (IOAccelerator, no sudo needed) and the game's CPU use, once a second. The test
 # banner counts down to the end of the hold (BB_TEST_CLOCK).
-echo $(( $(date +%s) + ${HOLD:-40} )) > out/test.clock
+# The hold ends on the clock: a slow sample (ioreg can take seconds) does not stretch it.
+hold_end=$(( $(date +%s) + ${HOLD:-40} ))
+echo $hold_end > out/test.clock
 : > "$base.load"
-for ((t = 0; t < ${HOLD:-40}; ++t)); do
+for ((t = 0; $(date +%s) < hold_end; ++t)); do
     require_alive "in the level at hold sample $t"
     gpu=$(ioreg -r -d 1 -c IOAccelerator | grep -oE '"Device Utilization %"=[0-9]+' | head -1 | cut -d= -f2)
     cpu=$(ps -o pcpu= -p "$(pgrep -x bb-probe | head -1)" 2>/dev/null | tr -d ' ')

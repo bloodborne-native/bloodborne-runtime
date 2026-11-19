@@ -54,6 +54,10 @@ Texture NewTexture(const TextureDesc& desc);
 void Release(void* object);
 /// The textures NewTexture made that are not released yet, and their bytes.
 void LiveTextures(u64* count, u64* bytes);
+/// Buffers made by NewBuffer and WrapHostMemory and not released yet, by kind: private,
+/// shared, shared write-combined, host memory used in place. Counts and allocated bytes.
+constexpr int kBufferKinds = 4;
+void LiveBuffers(u64 counts[kBufferKinds], u64 bytes[kBufferKinds]);
 #else
 inline bool Enabled() {
     return false;
@@ -71,6 +75,10 @@ inline Texture NewTexture(const TextureDesc&) {
 inline void Release(void*) {}
 inline void LiveTextures(u64* count, u64* bytes) {
     *count = *bytes = 0;
+}
+constexpr int kBufferKinds = 4;
+inline void LiveBuffers(u64 counts[kBufferKinds], u64 bytes[kBufferKinds]) {
+    for (int k = 0; k < kBufferKinds; ++k) counts[k] = bytes[k] = 0;
 }
 #endif
 
